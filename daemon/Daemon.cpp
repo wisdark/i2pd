@@ -17,7 +17,6 @@
 #include "Base.h"
 #include "version.h"
 #include "Transports.h"
-#include "NTCPSession.h"
 #include "RouterInfo.h"
 #include "RouterContext.h"
 #include "Tunnel.h"
@@ -151,8 +150,6 @@ namespace i2p
 			i2p::context.SetSupportsV6 (ipv6);
 			i2p::context.SetSupportsV4 (ipv4);
 
-			bool ntcp; i2p::config::GetOption("ntcp", ntcp);
-			i2p::context.PublishNTCPAddress (ntcp, !ipv6);
 			bool ntcp2; i2p::config::GetOption("ntcp2.enabled", ntcp2);
 			if (ntcp2)
 			{
@@ -160,7 +157,7 @@ namespace i2p
 				if (published)
 				{
 					uint16_t ntcp2port; i2p::config::GetOption("ntcp2.port", ntcp2port);
-					if (!ntcp && !ntcp2port) ntcp2port = port; // use standard port
+					if (!ntcp2port) ntcp2port = port; // use standard port
 					i2p::context.PublishNTCP2Address (ntcp2port, true); // publish
 					if (ipv6)
 					{
@@ -304,14 +301,12 @@ namespace i2p
 				d.m_NTPSync->Start ();
 			}
 
-			bool ntcp; i2p::config::GetOption("ntcp", ntcp);
 			bool ssu;  i2p::config::GetOption("ssu", ssu);
 			LogPrint(eLogInfo, "Daemon: starting Transports");
 			if(!ssu) LogPrint(eLogInfo, "Daemon: ssu disabled");
-			if(!ntcp) LogPrint(eLogInfo, "Daemon: ntcp disabled");
 
-			i2p::transport::transports.Start(ntcp, ssu);
-			if (i2p::transport::transports.IsBoundNTCP() || i2p::transport::transports.IsBoundSSU() || i2p::transport::transports.IsBoundNTCP2())
+			i2p::transport::transports.Start(ssu);
+			if (i2p::transport::transports.IsBoundSSU() || i2p::transport::transports.IsBoundNTCP2())
 				LogPrint(eLogInfo, "Daemon: Transports started");
 			else
 			{

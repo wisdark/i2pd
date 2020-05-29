@@ -58,9 +58,9 @@ namespace config {
 			("floodfill", bool_switch()->default_value(false),                "Router will be floodfill (default: disabled)")
 			("bandwidth", value<std::string>()->default_value(""),            "Bandwidth limit: integer in KBps or letters: L (32), O (256), P (2048), X (>9000)")
 			("share", value<int>()->default_value(100),                       "Limit of transit traffic from max bandwidth in percents. (default: 100)")
-			("ntcp", value<bool>()->default_value(false),                     "Enable NTCP transport (default: disabled)")
 			("ssu", value<bool>()->default_value(true),                       "Enable SSU transport (default: enabled)")
-			("ntcpproxy", value<std::string>()->default_value(""),            "Proxy URL for NTCP transport")
+			("ntcp", value<bool>()->default_value(false),                     "Deprecated option")
+			("ntcpproxy", value<std::string>()->default_value(""),            "Deprecated option")
 #ifdef _WIN32
 			("svcctl", value<std::string>()->default_value(""),               "Windows service management ('install' or 'remove')")
 			("insomnia", bool_switch()->default_value(false),                 "Prevent system from sleeping (default: disabled)")
@@ -201,7 +201,7 @@ namespace config {
 				"https://reseed.memcpy.io/,"
 				"https://reseed.onion.im/,"
 				"https://i2pseed.creativecowpat.net:8443/,"
-			    "https://reseed.i2pgit.org/,"                                                				
+				"https://reseed.i2pgit.org/,"
 				"https://i2p.novg.net/"
 			),                                                            "Reseed URLs, separated by comma")
 		;

@@ -42,7 +42,6 @@ SOURCES += DaemonQT.cpp mainwindow.cpp \
     ../../libi2pd/NetDb.cpp \
     ../../libi2pd/NetDbRequests.cpp \
     ../../libi2pd/NTCP2.cpp \
-    ../../libi2pd/NTCPSession.cpp \
     ../../libi2pd/Poly1305.cpp \
     ../../libi2pd/Profiling.cpp \
     ../../libi2pd/Reseed.cpp \
@@ -123,7 +122,6 @@ HEADERS  += DaemonQT.h mainwindow.h \
     ../../libi2pd/NetDb.hpp \
     ../../libi2pd/NetDbRequests.h \
     ../../libi2pd/NTCP2.h \
-    ../../libi2pd/NTCPSession.h \
     ../../libi2pd/Poly1305.h \
     ../../libi2pd/Profiling.h \
     ../../libi2pd/Queue.h \
@@ -228,7 +226,8 @@ windows {
         DEFINES += BOOST_USE_WINDOWS_H WINDOWS _WINDOWS WIN32_LEAN_AND_MEAN MINIUPNP_STATICLIB
         DEFINES -= UNICODE _UNICODE
         BOOST_SUFFIX = -mt
-        QMAKE_CXXFLAGS_RELEASE = -Os
+        QMAKE_CXXFLAGS += -Wno-deprecated-copy -Wno-class-memaccess
+        QMAKE_CXXFLAGS_RELEASE += -Os
         QMAKE_LFLAGS = -Wl,-Bstatic -static-libgcc -static-libstdc++ -mwindows
 
         #linker's -s means "strip"
@@ -246,6 +245,8 @@ windows {
         -lws2_32 \
         -lgdi32 \
         -liphlpapi \
+        -lole32 \
+        -luuid \
         -lstdc++ \
         -lpthread
 }
