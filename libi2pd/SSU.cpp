@@ -7,12 +7,15 @@
 */
 
 #include <string.h>
-#include <boost/bind.hpp>
 #include "Log.h"
 #include "Timestamp.h"
 #include "RouterContext.h"
 #include "NetDb.hpp"
 #include "SSU.h"
+
+#ifdef _WIN32
+#include <boost/winapi/error_codes.hpp>
+#endif
 
 namespace i2p
 {
@@ -20,27 +23,25 @@ namespace transport
 {
 
 	SSUServer::SSUServer (const boost::asio::ip::address & addr, int port):
-		m_OnlyV6(true), m_IsRunning(false),
-		m_Thread (nullptr), m_ThreadV6 (nullptr), m_ReceiversThread (nullptr),
-		m_ReceiversThreadV6 (nullptr), m_Work (m_Service), m_WorkV6 (m_ServiceV6),
+		m_OnlyV6(true), m_IsRunning(false), m_Thread (nullptr), 
+		m_ReceiversThread (nullptr), m_ReceiversThreadV6 (nullptr), m_Work (m_Service),
 		m_ReceiversWork (m_ReceiversService), m_ReceiversWorkV6 (m_ReceiversServiceV6),
 		m_EndpointV6 (addr, port), m_Socket (m_ReceiversService, m_Endpoint),
 		m_SocketV6 (m_ReceiversServiceV6), m_IntroducersUpdateTimer (m_Service),
 		m_PeerTestsCleanupTimer (m_Service), m_TerminationTimer (m_Service),
-		m_TerminationTimerV6 (m_ServiceV6)
+		m_TerminationTimerV6 (m_Service)
 	{
 		OpenSocketV6 ();
 	}
 
 	SSUServer::SSUServer (int port):
-		m_OnlyV6(false), m_IsRunning(false),
-		m_Thread (nullptr), m_ThreadV6 (nullptr), m_ReceiversThread (nullptr),
-		m_ReceiversThreadV6 (nullptr), 	m_Work (m_Service), m_WorkV6 (m_ServiceV6),
+		m_OnlyV6(false), m_IsRunning(false), m_Thread (nullptr),
+		m_ReceiversThread (nullptr), m_ReceiversThreadV6 (nullptr), m_Work (m_Service), 
 		m_ReceiversWork (m_ReceiversService), m_ReceiversWorkV6 (m_ReceiversServiceV6),
 		m_Endpoint (boost::asio::ip::udp::v4 (), port), m_EndpointV6 (boost::asio::ip::udp::v6 (), port),
 		m_Socket (m_ReceiversService), m_SocketV6 (m_ReceiversServiceV6),
 		m_IntroducersUpdateTimer (m_Service), m_PeerTestsCleanupTimer (m_Service),
-		m_TerminationTimer (m_Service), m_TerminationTimerV6 (m_ServiceV6)
+		m_TerminationTimer (m_Service), m_TerminationTimerV6 (m_Service)
 	{
 		OpenSocket ();
 		if (context.SupportsV6 ())
@@ -99,7 +100,8 @@ namespace transport
 		if (context.SupportsV6 ())
 		{
 			m_ReceiversThreadV6 = new std::thread (std::bind (&SSUServer::RunReceiversV6, this));
-			m_ThreadV6 = new std::thread (std::bind (&SSUServer::RunV6, this));
+			if (!m_Thread)		
+				m_Thread = new std::thread (std::bind (&SSUServer::Run, this));
 			m_ReceiversServiceV6.post (std::bind (&SSUServer::ReceiveV6, this));
 			ScheduleTerminationV6 ();
 		}
@@ -115,7 +117,6 @@ namespace transport
 		m_TerminationTimerV6.cancel ();
 		m_Service.stop ();
 		m_Socket.close ();
-		m_ServiceV6.stop ();
 		m_SocketV6.close ();
 		m_ReceiversService.stop ();
 		m_ReceiversServiceV6.stop ();
@@ -137,12 +138,6 @@ namespace transport
 			delete m_ReceiversThreadV6;
 			m_ReceiversThreadV6 = nullptr;
 		}
-		if (m_ThreadV6)
-		{
-			m_ThreadV6->join ();
-			delete m_ThreadV6;
-			m_ThreadV6 = nullptr;
-		}
 	}
 
 	void SSUServer::Run ()
@@ -156,21 +151,6 @@ namespace transport
 			catch (std::exception& ex)
 			{
 				LogPrint (eLogError, "SSU: server runtime exception: ", ex.what ());
-			}
-		}
-	}
-
-	void SSUServer::RunV6 ()
-	{
-		while (m_IsRunning)
-		{
-			try
-			{
-				m_ServiceV6.run ();
-			}
-			catch (std::exception& ex)
-			{
-				LogPrint (eLogError, "SSU: v6 server runtime exception: ", ex.what ());
 			}
 		}
 	}
@@ -243,10 +223,16 @@ namespace transport
 
 	void SSUServer::Send (const uint8_t * buf, size_t len, const boost::asio::ip::udp::endpoint& to)
 	{
+		boost::system::error_code ec;
 		if (to.protocol () == boost::asio::ip::udp::v4())
-			m_Socket.send_to (boost::asio::buffer (buf, len), to);
+			m_Socket.send_to (boost::asio::buffer (buf, len), to, 0, ec);
 		else
-			m_SocketV6.send_to (boost::asio::buffer (buf, len), to);
+			m_SocketV6.send_to (boost::asio::buffer (buf, len), to, 0, ec);
+
+		if (ec)
+		{
+			LogPrint (eLogError, "SSU: send exception: ", ec.message (), " while trying to send data to ", to.address (), ":", to.port (), " (length: ", len, ")");
+		}
 	}
 
 	void SSUServer::Receive ()
@@ -265,7 +251,19 @@ namespace transport
 
 	void SSUServer::HandleReceivedFrom (const boost::system::error_code& ecode, std::size_t bytes_transferred, SSUPacket * packet)
 	{
-		if (!ecode)
+		if (!ecode
+		    || ecode == boost::asio::error::connection_refused
+		    || ecode == boost::asio::error::connection_reset
+		    || ecode == boost::asio::error::network_unreachable
+		    || ecode == boost::asio::error::host_unreachable
+#ifdef _WIN32 // windows can throw WinAPI error, which is not handled by ASIO
+		    || ecode.value() == boost::winapi::ERROR_CONNECTION_REFUSED_
+		    || ecode.value() == boost::winapi::ERROR_NETWORK_UNREACHABLE_
+		    || ecode.value() == boost::winapi::ERROR_HOST_UNREACHABLE_
+#endif
+		)
+		// just try continue reading when received ICMP response otherwise socket can crash,
+		// but better to find out which host were sent it and mark that router as unreachable
 		{
 			packet->len = bytes_transferred;
 			std::vector<SSUPacket *> packets;
@@ -287,7 +285,7 @@ namespace transport
 					}
 					else
 					{
-						LogPrint (eLogError, "SSU: receive_from error: ", ec.message ());
+						LogPrint (eLogError, "SSU: receive_from error: code ", ec.value(), ": ", ec.message ());
 						delete packet;
 						break;
 					}
@@ -302,7 +300,7 @@ namespace transport
 			delete packet;
 			if (ecode != boost::asio::error::operation_aborted)
 			{
-				LogPrint (eLogError, "SSU: receive error: ", ecode.message ());
+				LogPrint (eLogError, "SSU: receive error: code ", ecode.value(), ": ", ecode.message ());
 				m_Socket.close ();
 				OpenSocket ();
 				Receive ();
@@ -312,7 +310,19 @@ namespace transport
 
 	void SSUServer::HandleReceivedFromV6 (const boost::system::error_code& ecode, std::size_t bytes_transferred, SSUPacket * packet)
 	{
-		if (!ecode)
+		if (!ecode
+		    || ecode == boost::asio::error::connection_refused
+		    || ecode == boost::asio::error::connection_reset
+		    || ecode == boost::asio::error::network_unreachable
+		    || ecode == boost::asio::error::host_unreachable
+#ifdef _WIN32 // windows can throw WinAPI error, which is not handled by ASIO
+		    || ecode.value() == boost::winapi::ERROR_CONNECTION_REFUSED_
+		    || ecode.value() == boost::winapi::ERROR_NETWORK_UNREACHABLE_
+		    || ecode.value() == boost::winapi::ERROR_HOST_UNREACHABLE_
+#endif
+		)
+		// just try continue reading when received ICMP response otherwise socket can crash,
+		// but better to find out which host were sent it and mark that router as unreachable
 		{
 			packet->len = bytes_transferred;
 			std::vector<SSUPacket *> packets;
@@ -334,14 +344,14 @@ namespace transport
 					}
 					else
 					{
-						LogPrint (eLogError, "SSU: v6 receive_from error: ", ec.message ());
+						LogPrint (eLogError, "SSU: v6 receive_from error: code ", ec.value(), ": ", ec.message ());
 						delete packet;
 						break;
 					}
 				}
 			}
 
-			m_ServiceV6.post (std::bind (&SSUServer::HandleReceivedPackets, this, packets, &m_SessionsV6));
+			m_Service.post (std::bind (&SSUServer::HandleReceivedPackets, this, packets, &m_SessionsV6));
 			ReceiveV6 ();
 		}
 		else
@@ -349,7 +359,7 @@ namespace transport
 			delete packet;
 			if (ecode != boost::asio::error::operation_aborted)
 			{
-				LogPrint (eLogError, "SSU: v6 receive error: ", ecode.message ());
+				LogPrint (eLogError, "SSU: v6 receive error: code ", ecode.value(), ": ", ecode.message ());
 				m_SocketV6.close ();
 				OpenSocketV6 ();
 				ReceiveV6 ();
@@ -439,8 +449,7 @@ namespace transport
 			else
 			{
 				boost::asio::ip::udp::endpoint remoteEndpoint (addr, port);
-				auto& s = addr.is_v6 () ? m_ServiceV6 : m_Service;
-				s.post (std::bind (&SSUServer::CreateDirectSession, this, router, remoteEndpoint, peerTest));
+				m_Service.post (std::bind (&SSUServer::CreateDirectSession, this, router, remoteEndpoint, peerTest));
 			}
 		}
 	}
@@ -460,6 +469,7 @@ namespace transport
 			// otherwise create new session
 			auto session = std::make_shared<SSUSession> (*this, remoteEndpoint, router, peerTest);
 			sessions[remoteEndpoint] = session;
+
 			// connect
 			LogPrint (eLogDebug, "SSU: Creating new session to [", i2p::data::GetIdentHashAbbreviation (router->GetIdentHash ()), "] ",
 				remoteEndpoint.address ().to_string (), ":", remoteEndpoint.port ());
@@ -823,7 +833,7 @@ namespace transport
 					auto session = it.second;
 					if (it.first != session->GetRemoteEndpoint ())
 						LogPrint (eLogWarning, "SSU: remote endpoint ", session->GetRemoteEndpoint (), " doesn't match key ", it.first);
-					m_ServiceV6.post ([session]
+					m_Service.post ([session]
 						{
 							LogPrint (eLogWarning, "SSU: no activity with ", session->GetRemoteEndpoint (), " for ", session->GetTerminationTimeout (), " seconds");
 							session->Failed ();

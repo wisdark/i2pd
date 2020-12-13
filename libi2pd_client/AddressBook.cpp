@@ -198,13 +198,18 @@ namespace client
 
 		for (const auto& it: addresses)
 		{
-			f << it.first << ",";
-			if (it.second->IsIdentHash ())
-				f << it.second->identHash.ToBase32 ();
+			if (it.second->IsValid ())
+			{	
+				f << it.first << ",";
+				if (it.second->IsIdentHash ())
+					f << it.second->identHash.ToBase32 ();
+				else
+					f << it.second->blindedPublicKey->ToB33 ();
+				f << std::endl;
+				num++;
+			}	
 			else
-				f << it.second->blindedPublicKey->ToB33 ();
-			f << std::endl;
-			num++;
+				LogPrint (eLogWarning, "Addressbook: invalid address ", it.first);
 		}
 		LogPrint (eLogInfo, "Addressbook: ", num, " addresses saved");
 		return num;
@@ -449,17 +454,18 @@ namespace client
 				auto it = m_Addresses.find (name);
 				if (it != m_Addresses.end ()) // already exists ?
 				{
-					if (it->second->IsIdentHash () && it->second->identHash != ident->GetIdentHash ()) // address changed?
+					if (it->second->IsIdentHash () && it->second->identHash != ident->GetIdentHash () &&  // address changed?
+						ident->GetSigningKeyType () != i2p::data::SIGNING_KEY_TYPE_DSA_SHA1) // don't replace by DSA 
 					{
 						it->second->identHash = ident->GetIdentHash ();
 						m_Storage->AddAddress (ident);
+						m_Storage->RemoveAddress (it->second->identHash);
 						LogPrint (eLogInfo, "Addressbook: updated host: ", name);
 					}
 				}
 				else
 				{
-					//m_Addresses.emplace (name, std::make_shared<Address>(ident->GetIdentHash ()));
-					m_Addresses[name] = std::make_shared<Address>(ident->GetIdentHash ()); // for gcc 4.7
+					m_Addresses.emplace (name, std::make_shared<Address>(ident->GetIdentHash ()));
 					m_Storage->AddAddress (ident);
 					if (is_update)
 						LogPrint (eLogInfo, "Addressbook: added new host: ", name);
@@ -801,6 +807,7 @@ namespace client
 		i2p::http::HTTPReq req;
 		req.AddHeader("Host", dest_host);
 		req.AddHeader("User-Agent", "Wget/1.11.4");
+		req.AddHeader("Accept-Encoding", "gzip");
 		req.AddHeader("X-Accept-Encoding", "x-i2p-gzip;q=1.0, identity;q=0.5, deflate;q=0, gzip;q=0, *;q=0");
 		req.AddHeader("Connection", "close");
 		if (!m_Etag.empty())
@@ -811,6 +818,7 @@ namespace client
 		url.schema = "";
 		url.host   = "";
 		req.uri    = url.to_string();
+		req.version = "HTTP/1.1";
 		auto stream = i2p::client::context.GetSharedLocalDestination ()->CreateStream (leaseSet, dest_port);
 		std::string request = req.to_string();
 		stream->Send ((const uint8_t *) request.data(), request.length());
@@ -882,7 +890,7 @@ namespace client
 		/* assert: res.code == 200 */
 		auto it = res.headers.find("ETag");
 		if (it != res.headers.end()) m_Etag = it->second;
-		it = res.headers.find("If-Modified-Since");
+		it = res.headers.find("Last-Modified");
 		if (it != res.headers.end()) m_LastModified = it->second;
 		if (res.is_chunked())
 		{
@@ -890,7 +898,7 @@ namespace client
 			i2p::http::MergeChunkedResponse (in, out);
 			response = out.str();
 		}
-		else if (res.is_gzipped())
+		if (res.is_gzipped())
 		{
 			std::stringstream out;
 			i2p::data::GzipInflator inflator;

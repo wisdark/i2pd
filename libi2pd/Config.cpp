@@ -47,10 +47,11 @@ namespace config {
 			("ifname", value<std::string>()->default_value(""),               "Network interface to bind to")
 			("ifname4", value<std::string>()->default_value(""),              "Network interface to bind to for ipv4")
 			("ifname6", value<std::string>()->default_value(""),              "Network interface to bind to for ipv6")
-			("nat", value<bool>()->default_value(true),                       "Should we assume we are behind NAT? (default: enabled)")
+			("nat", bool_switch()->default_value(true),                       "Should we assume we are behind NAT? (default: enabled)")
 			("port", value<uint16_t>()->default_value(0),                     "Port to listen for incoming connections (default: auto)")
-			("ipv4", value<bool>()->default_value(true),                      "Enable communication through ipv4 (default: enabled)")
+			("ipv4", bool_switch()->default_value(true),                      "Enable communication through ipv4 (default: enabled)")
 			("ipv6", bool_switch()->default_value(false),                     "Enable communication through ipv6 (default: disabled)")
+			("reservedrange", bool_switch()->default_value(true),             "Check remote RI for being in blacklist of reserved IP ranges (default: enabled)")
 			("netid", value<int>()->default_value(I2PD_NET_ID),               "Specify NetID. Main I2P is 2")
 			("daemon", bool_switch()->default_value(false),                   "Router will go to background after start (default: disabled)")
 			("service", bool_switch()->default_value(false),                  "Router will use system folders like '/var/lib/i2pd' (default: disabled)")
@@ -58,9 +59,9 @@ namespace config {
 			("floodfill", bool_switch()->default_value(false),                "Router will be floodfill (default: disabled)")
 			("bandwidth", value<std::string>()->default_value(""),            "Bandwidth limit: integer in KBps or letters: L (32), O (256), P (2048), X (>9000)")
 			("share", value<int>()->default_value(100),                       "Limit of transit traffic from max bandwidth in percents. (default: 100)")
-			("ntcp", value<bool>()->default_value(false),                     "Enable NTCP transport (default: disabled)")
-			("ssu", value<bool>()->default_value(true),                       "Enable SSU transport (default: enabled)")
-			("ntcpproxy", value<std::string>()->default_value(""),            "Proxy URL for NTCP transport")
+			("ntcp", bool_switch()->default_value(false),                     "Ignored. Always false")
+			("ssu", bool_switch()->default_value(true),                       "Enable SSU transport (default: enabled)")
+			("ntcpproxy", value<std::string>()->default_value(""),            "Ignored")
 #ifdef _WIN32
 			("svcctl", value<std::string>()->default_value(""),               "Windows service management ('install' or 'remove')")
 			("insomnia", bool_switch()->default_value(false),                 "Prevent system from sleeping (default: disabled)")
@@ -96,7 +97,7 @@ namespace config {
 			("httpproxy.enabled", value<bool>()->default_value(true),                 "Enable or disable HTTP Proxy")
 			("httpproxy.address", value<std::string>()->default_value("127.0.0.1"),   "HTTP Proxy listen address")
 			("httpproxy.port", value<uint16_t>()->default_value(4444),                "HTTP Proxy listen port")
-			("httpproxy.keys", value<std::string>()->default_value(""),               "File to persist HTTP Proxy keys")
+			("httpproxy.keys", value<std::string>()->default_value("transient-proxy"), "File to persist HTTP Proxy keys. Transient by default")
 			("httpproxy.signaturetype", value<i2p::data::SigningKeyType>()->
 				default_value(i2p::data::SIGNING_KEY_TYPE_EDDSA_SHA512_ED25519),      "Signature type for new keys. 7 (EdDSA) by default")
 			("httpproxy.inbound.length", value<std::string>()->default_value("3"),    "HTTP proxy inbound tunnel length")
@@ -107,8 +108,8 @@ namespace config {
 			("httpproxy.latency.max", value<std::string>()->default_value("0"),       "HTTP proxy max latency for tunnels")
 			("httpproxy.outproxy", value<std::string>()->default_value(""),           "HTTP proxy upstream out proxy url")
 			("httpproxy.addresshelper", value<bool>()->default_value(true),           "Enable or disable addresshelper")
-			("httpproxy.i2cp.leaseSetType", value<std::string>()->default_value("1"), "Local destination's LeaseSet type")
-			("httpproxy.i2cp.leaseSetEncType", value<std::string>()->default_value("0"), "Local destination's LeaseSet encryption type")
+			("httpproxy.i2cp.leaseSetType", value<std::string>()->default_value("3"), "Local destination's LeaseSet type")
+			("httpproxy.i2cp.leaseSetEncType", value<std::string>()->default_value("0,4"), "Local destination's LeaseSet encryption type")
 		;
 
 		options_description socksproxy("SOCKS Proxy options");
@@ -116,7 +117,7 @@ namespace config {
 			("socksproxy.enabled", value<bool>()->default_value(true),                 "Enable or disable SOCKS Proxy")
 			("socksproxy.address", value<std::string>()->default_value("127.0.0.1"),   "SOCKS Proxy listen address")
 			("socksproxy.port", value<uint16_t>()->default_value(4447),                "SOCKS Proxy listen port")
-			("socksproxy.keys", value<std::string>()->default_value(""),               "File to persist SOCKS Proxy keys")
+			("socksproxy.keys", value<std::string>()->default_value("transient-proxy"), "File to persist SOCKS Proxy keys. Transient by default")
 			("socksproxy.signaturetype", value<i2p::data::SigningKeyType>()->
 				default_value(i2p::data::SIGNING_KEY_TYPE_EDDSA_SHA512_ED25519),       "Signature type for new keys. 7 (EdDSA) by default")
 			("socksproxy.inbound.length", value<std::string>()->default_value("3"),    "SOCKS proxy inbound tunnel length")
@@ -128,8 +129,8 @@ namespace config {
 			("socksproxy.outproxy.enabled", value<bool>()->default_value(false),       "Enable or disable SOCKS outproxy")
 			("socksproxy.outproxy", value<std::string>()->default_value("127.0.0.1"),  "Upstream outproxy address for SOCKS Proxy")
 			("socksproxy.outproxyport", value<uint16_t>()->default_value(9050),        "Upstream outproxy port for SOCKS Proxy")
-			("socksproxy.i2cp.leaseSetType", value<std::string>()->default_value("1"), "Local destination's LeaseSet type")
-			("socksproxy.i2cp.leaseSetEncType", value<std::string>()->default_value("0"), "Local destination's LeaseSet encryption type")
+			("socksproxy.i2cp.leaseSetType", value<std::string>()->default_value("3"), "Local destination's LeaseSet type")
+			("socksproxy.i2cp.leaseSetEncType", value<std::string>()->default_value("0,4"), "Local destination's LeaseSet encryption type")
 		;
 
 		options_description sam("SAM bridge options");
@@ -152,6 +153,7 @@ namespace config {
 			("i2cp.enabled", value<bool>()->default_value(false),              "Enable or disable I2CP")
 			("i2cp.address", value<std::string>()->default_value("127.0.0.1"), "I2CP listen address")
 			("i2cp.port", value<uint16_t>()->default_value(7654),              "I2CP listen port")
+			("i2cp.singlethread", value<bool>()->default_value(true),          "Destinations run in the I2CP server's thread")
 		;
 
 		options_description i2pcontrol("I2PControl options");
@@ -195,13 +197,12 @@ namespace config {
 			("reseed.proxy", value<std::string>()->default_value(""),     "url for reseed proxy, supports http/socks")
 			("reseed.urls", value<std::string>()->default_value(
 				"https://reseed.i2p-projekt.de/,"
-				"https://i2p.mooo.com/netDb/,"
-				"https://reseed.i2p2.no/,"
+				"https://reseed.diva.exchange/,"
 				"https://reseed-fr.i2pd.xyz/,"
 				"https://reseed.memcpy.io/,"
 				"https://reseed.onion.im/,"
 				"https://i2pseed.creativecowpat.net:8443/,"
-			    "https://reseed.i2pgit.org/,"                                                				
+				"https://reseed.i2pgit.org/,"
 				"https://i2p.novg.net/"
 			),                                                            "Reseed URLs, separated by comma")
 		;
@@ -264,6 +265,13 @@ namespace config {
 			("persist.addressbook", value<bool>()->default_value(true),    "Persist full addresses (default: true)")
 		;
 
+		options_description cpuext("CPU encryption extensions options");
+		cpuext.add_options()
+			("cpuext.aesni", bool_switch()->default_value(true),                     "Use auto detection for AESNI CPU extensions. If false, AESNI will be not used")
+			("cpuext.avx", bool_switch()->default_value(true),                       "Use auto detection for AVX CPU extensions. If false, AVX will be not used")
+			("cpuext.force", bool_switch()->default_value(false),                    "Force usage of CPU extensions. Useful when cpuinfo is not available on virtual machines")
+		;
+
 		m_OptionsDesc
 			.add(general)
 			.add(limits)
@@ -284,6 +292,7 @@ namespace config {
 			.add(ntcp2)
 			.add(nettime)
 			.add(persist)
+			.add(cpuext)
 		;
 	}
 

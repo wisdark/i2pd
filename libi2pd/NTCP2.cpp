@@ -39,21 +39,6 @@ namespace transport
 		delete[] m_SessionConfirmedBuffer;
 	}
 
-	void NTCP2Establisher::MixKey (const uint8_t * inputKeyMaterial)
-	{
-		i2p::crypto::HKDF (m_CK, inputKeyMaterial, 32, "", m_CK);
-		// ck is m_CK[0:31], k is m_CK[32:63]
-	}
-
-	void NTCP2Establisher::MixHash (const uint8_t * buf, size_t len)
-	{
-		SHA256_CTX ctx;
-		SHA256_Init (&ctx);
-		SHA256_Update (&ctx, m_H, 32);
-		SHA256_Update (&ctx, buf, len);
-		SHA256_Final (m_H, &ctx);
-	}
-
 	void NTCP2Establisher::KeyDerivationFunction1 (const uint8_t * pub, i2p::crypto::X25519Keys& priv, const uint8_t * rs, const uint8_t * epub)
 	{
 		static const uint8_t protocolNameHash[] =
@@ -83,7 +68,7 @@ namespace transport
 
 	void NTCP2Establisher::KDF1Alice ()
 	{
-		KeyDerivationFunction1 (m_RemoteStaticKey, m_EphemeralKeys, m_RemoteStaticKey, GetPub ());
+		KeyDerivationFunction1 (m_RemoteStaticKey, *m_EphemeralKeys, m_RemoteStaticKey, GetPub ());
 	}
 
 	void NTCP2Establisher::KDF1Bob ()
@@ -102,7 +87,7 @@ namespace transport
 
 		// x25519 between remote pub and ephemaral priv
 		uint8_t inputKeyMaterial[32];
-		m_EphemeralKeys.Agree (GetRemotePub (), inputKeyMaterial);
+		m_EphemeralKeys->Agree (GetRemotePub (), inputKeyMaterial);
 
 		MixKey (inputKeyMaterial);
 	}
@@ -127,13 +112,13 @@ namespace transport
 	void NTCP2Establisher::KDF3Bob ()
 	{
 		uint8_t inputKeyMaterial[32];
-		m_EphemeralKeys.Agree (m_RemoteStaticKey, inputKeyMaterial);
+		m_EphemeralKeys->Agree (m_RemoteStaticKey, inputKeyMaterial);
 		MixKey (inputKeyMaterial);
 	}
 
 	void NTCP2Establisher::CreateEphemeralKey ()
 	{
-		m_EphemeralKeys.GenerateKeys ();
+		m_EphemeralKeys = i2p::transport::transports.GetNextX25519KeysPair ();
 	}
 
 	void NTCP2Establisher::CreateSessionRequestMessage ()
@@ -338,11 +323,8 @@ namespace transport
 
 		KDF3Bob ();
 		if (i2p::crypto::AEADChaCha20Poly1305 (m_SessionConfirmedBuffer + 48, m3p2Len - 16, GetH (), 32, GetK (), nonce, m3p2Buf, m3p2Len - 16, false)) // decrypt
-		{
 			// caclulate new h again for KDF data
-			memcpy (m_SessionConfirmedBuffer + 16, m_H, 32); // h || ciphertext
-			SHA256 (m_SessionConfirmedBuffer + 16, m3p2Len + 32, m_H); //h = SHA256(h || ciphertext);
-		}
+			MixHash (m_SessionConfirmedBuffer + 48, m3p2Len); // h = SHA256(h || ciphertext)
 		else
 		{
 			LogPrint (eLogWarning, "NTCP2: SessionConfirmed Part2 AEAD verification failed ");
@@ -760,6 +742,10 @@ namespace transport
 	void NTCP2Session::ReceiveLength ()
 	{
 		if (IsTerminated ()) return;
+#ifdef __linux__
+		const int one = 1;
+    	setsockopt(m_Socket.native_handle(), IPPROTO_TCP, TCP_QUICKACK, &one, sizeof(one));
+#endif		
 		boost::asio::async_read (m_Socket, boost::asio::buffer(&m_NextReceivedLen, 2), boost::asio::transfer_all (),
 			std::bind(&NTCP2Session::HandleReceivedLength, shared_from_this (), std::placeholders::_1, std::placeholders::_2));
 	}
@@ -811,6 +797,10 @@ namespace transport
 	void NTCP2Session::Receive ()
 	{
 		if (IsTerminated ()) return;
+#ifdef __linux__
+		const int one = 1;
+    	setsockopt(m_Socket.native_handle(), IPPROTO_TCP, TCP_QUICKACK, &one, sizeof(one));
+#endif			
 		boost::asio::async_read (m_Socket, boost::asio::buffer(m_NextReceivedBuffer, m_NextReceivedLen), boost::asio::transfer_all (),
 			std::bind(&NTCP2Session::HandleReceived, shared_from_this (), std::placeholders::_1, std::placeholders::_2));
 	}
@@ -1305,7 +1295,8 @@ namespace transport
 						if (ecode != boost::asio::error::operation_aborted)
 						{
 							LogPrint (eLogInfo, "NTCP2: Not connected in ", timeout, " seconds");
-							//i2p::data::netdb.SetUnreachable (conn->GetRemoteIdentity ()->GetIdentHash (), true);
+							if (conn->GetRemoteIdentity ())
+								i2p::data::netdb.SetUnreachable (conn->GetRemoteIdentity ()->GetIdentHash (), true);
 							conn->Terminate ();
 						}
 					});
@@ -1437,7 +1428,7 @@ namespace transport
 			{
 
 				auto timer = std::make_shared<boost::asio::deadline_timer>(GetService());
-				auto timeout = NTCP_CONNECT_TIMEOUT * 5;
+				auto timeout = NTCP2_CONNECT_TIMEOUT * 5;
 				conn->SetTerminationTimeout(timeout * 2);
 				timer->expires_from_now (boost::posix_time::seconds(timeout));
 				timer->async_wait ([conn, timeout](const boost::system::error_code& ecode)

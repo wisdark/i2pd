@@ -13,6 +13,7 @@
 #include <vector>
 #include <boost/algorithm/string.hpp>
 #include "Crypto.h"
+#include "Config.h"
 #include "Log.h"
 #include "FS.h"
 #include "Timestamp.h"
@@ -56,6 +57,9 @@ namespace client
 				if (it != params->end ())
 					numTags = std::stoi(it->second);
 				LogPrint (eLogInfo, "Destination: parameters for tunnel set to: ", inQty, " inbound (", inLen, " hops), ", outQty, " outbound (", outLen, " hops), ", numTags, " tags");
+				it = params->find (I2CP_PARAM_RATCHET_INBOUND_TAGS);
+				if (it != params->end ())
+					SetNumRatchetInboundTags (std::stoi(it->second));
 				it = params->find (I2CP_PARAM_EXPLICIT_PEERS);
 				if (it != params->end ())
 				{
@@ -461,14 +465,14 @@ namespace client
 			if (request->excluded.size () < MAX_NUM_FLOODFILLS_PER_REQUEST)
 			{
 				for (int i = 0; i < num; i++)
-			{
-				i2p::data::IdentHash peerHash (buf + 33 + i*32);
-				if (!request->excluded.count (peerHash) && !i2p::data::netdb.FindRouter (peerHash))
 				{
-					LogPrint (eLogInfo, "Destination: Found new floodfill, request it"); // TODO: recheck this message
-					i2p::data::netdb.RequestDestination (peerHash);
+					i2p::data::IdentHash peerHash (buf + 33 + i*32);
+					if (!request->excluded.count (peerHash) && !i2p::data::netdb.FindRouter (peerHash))
+					{
+						LogPrint (eLogInfo, "Destination: Found new floodfill, request it"); 
+						i2p::data::netdb.RequestDestination (peerHash, nullptr, false); // through exploratory
+					}
 				}
-			}
 
 				auto floodfill = i2p::data::netdb.GetClosestFloodfill (key, request->excluded);
 				if (floodfill)
@@ -555,7 +559,9 @@ namespace client
 		m_ExcludedFloodfills.insert (floodfill->GetIdentHash ());
 		LogPrint (eLogDebug, "Destination: Publish LeaseSet of ", GetIdentHash ().ToBase32 ());
 		RAND_bytes ((uint8_t *)&m_PublishReplyToken, 4);
-		auto msg = WrapMessage (floodfill, i2p::CreateDatabaseStoreMsg (leaseSet, m_PublishReplyToken, inbound));
+		auto msg = i2p::CreateDatabaseStoreMsg (leaseSet, m_PublishReplyToken, inbound);
+		if (floodfill->GetIdentity ()->GetCryptoKeyType () != i2p::data::CRYPTO_KEY_TYPE_ECIES_X25519_AEAD) // TODO: remove whan implemented
+			msg = WrapMessageForRouter (floodfill, msg);
 		m_PublishConfirmationTimer.expires_from_now (boost::posix_time::seconds(PUBLISH_CONFIRMATION_TIMEOUT));
 		m_PublishConfirmationTimer.async_wait (std::bind (&LeaseSetDestination::HandlePublishConfirmationTimer,
 			shared_from_this (), std::placeholders::_1));
@@ -600,9 +606,8 @@ namespace client
 				return;
 			}
 			auto s = shared_from_this ();
-			// we must capture this for gcc 4.7 due the bug
 			RequestLeaseSet (ls->GetStoreHash (),
-				[s, ls, this](std::shared_ptr<const i2p::data::LeaseSet> leaseSet)
+				[s, ls](std::shared_ptr<const i2p::data::LeaseSet> leaseSet)
 				{
 					if (leaseSet)
 					{
@@ -741,14 +746,19 @@ namespace client
 			request->excluded.insert (nextFloodfill->GetIdentHash ());
 			request->requestTimeoutTimer.cancel ();
 
+			bool isECIES = SupportsEncryptionType (i2p::data::CRYPTO_KEY_TYPE_ECIES_X25519_AEAD) &&
+				nextFloodfill->GetVersion () >= MAKE_VERSION_NUMBER(0, 9, 46); // >= 0.9.46;
 			uint8_t replyKey[32], replyTag[32];
 			RAND_bytes (replyKey, 32); // random session key
-			RAND_bytes (replyTag, 32); // random session tag
-			AddSessionKey (replyKey, replyTag);
+			RAND_bytes (replyTag, isECIES ? 8 : 32); // random session tag
+			if (isECIES)	
+				AddECIESx25519Key (replyKey, replyTag);
+			else	
+				AddSessionKey (replyKey, replyTag);
 
-			auto msg = WrapMessage (nextFloodfill,
-				CreateLeaseSetDatabaseLookupMsg (dest, request->excluded,
-					request->replyTunnel, replyKey, replyTag));
+			auto msg = CreateLeaseSetDatabaseLookupMsg (dest, request->excluded, request->replyTunnel, replyKey, replyTag, isECIES);
+			if (nextFloodfill->GetIdentity ()->GetCryptoKeyType () != i2p::data::CRYPTO_KEY_TYPE_ECIES_X25519_AEAD) // TODO: remove whan implemented
+				msg = WrapMessageForRouter (nextFloodfill, msg);
 			request->outboundTunnel->SendTunnelDataMsg (
 				{
 					i2p::tunnel::TunnelMessageBlock
@@ -835,15 +845,16 @@ namespace client
 
 	i2p::data::CryptoKeyType LeaseSetDestination::GetPreferredCryptoType () const
 	{
-		if (SupportsEncryptionType (i2p::data::CRYPTO_KEY_TYPE_ECIES_X25519_AEAD_RATCHET))
-			return i2p::data::CRYPTO_KEY_TYPE_ECIES_X25519_AEAD_RATCHET;
+		if (SupportsEncryptionType (i2p::data::CRYPTO_KEY_TYPE_ECIES_X25519_AEAD))
+			return i2p::data::CRYPTO_KEY_TYPE_ECIES_X25519_AEAD;
 		return i2p::data::CRYPTO_KEY_TYPE_ELGAMAL;
 	}
 
 	ClientDestination::ClientDestination (boost::asio::io_service& service, const i2p::data::PrivateKeys& keys,
 		bool isPublic, const std::map<std::string, std::string> * params):
-		LeaseSetDestination (service, isPublic, params),
-		m_Keys (keys), m_StreamingAckDelay (DEFAULT_INITIAL_ACK_DELAY),
+		LeaseSetDestination (service, isPublic, params), 
+		m_Keys (keys), m_StreamingAckDelay (DEFAULT_INITIAL_ACK_DELAY), 
+		m_IsStreamingAnswerPings (DEFAULT_ANSWER_PINGS),
 		m_DatagramDestination (nullptr), m_RefCounter (0),
 		m_ReadyChecker(service)
 	{
@@ -852,8 +863,7 @@ namespace client
 
 		// extract encryption type params for LS2
 		std::set<i2p::data::CryptoKeyType> encryptionKeyTypes;
-		if ((GetLeaseSetType () == i2p::data::NETDB_STORE_TYPE_STANDARD_LEASESET2 ||
-			GetLeaseSetType () == i2p::data::NETDB_STORE_TYPE_ENCRYPTED_LEASESET2) && params)
+		if (params)
 		{
 			auto it = params->find (I2CP_PARAM_LEASESET_ENCRYPTION_TYPE);
 			if (it != params->end ())
@@ -891,8 +901,12 @@ namespace client
 			else
 				encryptionKey->GenerateKeys ();
 			encryptionKey->CreateDecryptor ();
-			if (it == i2p::data::CRYPTO_KEY_TYPE_ECIES_X25519_AEAD_RATCHET)
+			if (it == i2p::data::CRYPTO_KEY_TYPE_ECIES_X25519_AEAD)
+			{	
 				m_ECIESx25519EncryptionKey.reset (encryptionKey);
+				if (GetLeaseSetType () == i2p::data::NETDB_STORE_TYPE_LEASESET)
+					SetLeaseSetType (i2p::data::NETDB_STORE_TYPE_STANDARD_LEASESET2); // Rathets must use LeaseSet2 
+			}	
 			else
 				m_StandardEncryptionKey.reset (encryptionKey);
 		}
@@ -908,7 +922,10 @@ namespace client
 				auto it = params->find (I2CP_PARAM_STREAMING_INITIAL_ACK_DELAY);
 				if (it != params->end ())
 					m_StreamingAckDelay = std::stoi(it->second);
-
+				it = params->find (I2CP_PARAM_STREAMING_ANSWER_PINGS);
+				if (it != params->end ())
+					i2p::config::GetOption (it->second, m_IsStreamingAnswerPings);
+				
 				if (GetLeaseSetType () == i2p::data::NETDB_STORE_TYPE_ENCRYPTED_LEASESET2)
 				{
 					// authentication for encrypted LeaseSet
@@ -1201,7 +1218,7 @@ namespace client
 
 	bool ClientDestination::Decrypt (const uint8_t * encrypted, uint8_t * data, BN_CTX * ctx, i2p::data::CryptoKeyType preferredCrypto) const
 	{
-		if (preferredCrypto == i2p::data::CRYPTO_KEY_TYPE_ECIES_X25519_AEAD_RATCHET)
+		if (preferredCrypto == i2p::data::CRYPTO_KEY_TYPE_ECIES_X25519_AEAD)
 			if (m_ECIESx25519EncryptionKey && m_ECIESx25519EncryptionKey->decryptor)
 				return m_ECIESx25519EncryptionKey->decryptor->Decrypt (encrypted, data, ctx, true);
 		if (m_StandardEncryptionKey && m_StandardEncryptionKey->decryptor)
@@ -1213,12 +1230,12 @@ namespace client
 
 	bool ClientDestination::SupportsEncryptionType (i2p::data::CryptoKeyType keyType) const
 	{
-		return keyType == i2p::data::CRYPTO_KEY_TYPE_ECIES_X25519_AEAD_RATCHET ? (bool)m_ECIESx25519EncryptionKey : (bool)m_StandardEncryptionKey;
+		return keyType == i2p::data::CRYPTO_KEY_TYPE_ECIES_X25519_AEAD ? (bool)m_ECIESx25519EncryptionKey : (bool)m_StandardEncryptionKey;
 	}
 
 	const uint8_t * ClientDestination::GetEncryptionPublicKey (i2p::data::CryptoKeyType keyType) const
 	{
-		if (keyType == i2p::data::CRYPTO_KEY_TYPE_ECIES_X25519_AEAD_RATCHET)
+		if (keyType == i2p::data::CRYPTO_KEY_TYPE_ECIES_X25519_AEAD)
 			return m_ECIESx25519EncryptionKey ? m_ECIESx25519EncryptionKey->pub : nullptr;
 		return m_StandardEncryptionKey ? m_StandardEncryptionKey->pub : nullptr;
 	}

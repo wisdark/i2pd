@@ -153,12 +153,10 @@ namespace data
 			uint64_t GetTimestamp () const { return m_Timestamp; };
 			int GetVersion () const { return m_Version; };
 			Addresses& GetAddresses () { return *m_Addresses; }; // should be called for local RI only, otherwise must return shared_ptr
-			std::shared_ptr<const Address> GetNTCPAddress (bool v4only = true) const;
 			std::shared_ptr<const Address> GetNTCP2Address (bool publishedOnly,  bool v4only = true) const;
 			std::shared_ptr<const Address> GetSSUAddress (bool v4only = true) const;
 			std::shared_ptr<const Address> GetSSUV6Address () const;
 
-			void AddNTCPAddress (const char * host, int port);
 			void AddSSUAddress (const char * host, int port, const uint8_t * key, int mtu = 0);
 			void AddNTCP2Address (const uint8_t * staticKey, const uint8_t * iv, const boost::asio::ip::address& host = boost::asio::ip::address(), int port = 0);
 			bool AddIntroducer (const Introducer& introducer);
@@ -169,7 +167,6 @@ namespace data
 			void ClearProperties () { m_Properties.clear (); };
 			bool IsFloodfill () const { return m_Caps & Caps::eFloodfill; };
 			bool IsReachable () const { return m_Caps & Caps::eReachable; };
-			bool IsNTCP (bool v4only = true) const;
 			bool IsSSU (bool v4only = true) const;
 			bool IsSSUV6 () const;
 			bool IsNTCP2 (bool v4only = true) const;
@@ -187,7 +184,8 @@ namespace data
 			bool IsHidden () const { return m_Caps & eHidden; };
 			bool IsHighBandwidth () const { return m_Caps & RouterInfo::eHighBandwidth; };
 			bool IsExtraBandwidth () const { return m_Caps & RouterInfo::eExtraBandwidth; };
-
+			bool IsEligibleFloodfill () const;
+		
 			uint8_t GetCaps () const { return m_Caps; };
 			void SetCaps (uint8_t caps);
 			void SetCaps (const char * caps);

@@ -111,7 +111,7 @@ namespace tunnel
 		while (hop)
 		{
 			decryption.SetKey (hop->replyKey);
-			// decrypt records before and including current hop
+			// decrypt records before and current hop 
 			TunnelHopConfig * hop1 = hop;
 			while (hop1)
 			{
@@ -119,8 +119,22 @@ namespace tunnel
 				if (idx >= 0 && idx < msg[0])
 				{
 					uint8_t * record = msg + 1 + idx*TUNNEL_BUILD_RECORD_SIZE;
-					decryption.SetIV (hop->replyIV);
-					decryption.Decrypt(record, TUNNEL_BUILD_RECORD_SIZE, record);
+					if (hop1 == hop && hop1->IsECIES ())
+					{
+						uint8_t nonce[12];
+						memset (nonce, 0, 12);
+						if (!i2p::crypto::AEADChaCha20Poly1305 (record, TUNNEL_BUILD_RECORD_SIZE - 16, 
+							hop->m_H, 32, hop->m_CK, nonce, record, TUNNEL_BUILD_RECORD_SIZE - 16, false)) // decrypt
+						{
+							LogPrint (eLogWarning, "Tunnel: Response AEAD decryption failed");
+							return false;
+						}	
+					}
+					else
+					{	
+						decryption.SetIV (hop->replyIV);
+						decryption.Decrypt(record, TUNNEL_BUILD_RECORD_SIZE, record);
+					}	
 				}
 				else
 					LogPrint (eLogWarning, "Tunnel: hop index ", idx, " is out of range");
@@ -134,7 +148,7 @@ namespace tunnel
 		while (hop)
 		{
 			const uint8_t * record = msg + 1 + hop->recordIndex*TUNNEL_BUILD_RECORD_SIZE;
-			uint8_t ret = record[BUILD_RESPONSE_RECORD_RET_OFFSET];
+			uint8_t ret = record[hop->IsECIES () ? ECIES_BUILD_RESPONSE_RECORD_RET_OFFSET : BUILD_RESPONSE_RECORD_RET_OFFSET];
 			LogPrint (eLogDebug, "Tunnel: Build response ret code=", (int)ret);
 			auto profile = i2p::data::netdb.FindRouterProfile (hop->ident->GetIdentHash ());
 			if (profile)
@@ -303,6 +317,7 @@ namespace tunnel
 	{
 		for (auto& msg : msgs)
 		{
+			if (!msg.data) continue;
 			switch (msg.deliveryType)
 			{
 				case eDeliveryTypeLocal:
@@ -459,7 +474,7 @@ namespace tunnel
 	{
 		std::this_thread::sleep_for (std::chrono::seconds(1)); // wait for other parts are ready
 
-		uint64_t lastTs = 0;
+		uint64_t lastTs = 0, lastPoolsTs = 0;
 		while (m_IsRunning)
 		{
 			try
@@ -520,12 +535,20 @@ namespace tunnel
 					while (msg);
 				}
 
-				uint64_t ts = i2p::util::GetSecondsSinceEpoch ();
-				if (ts - lastTs >= 15) // manage tunnels every 15 seconds
+				if (i2p::transport::transports.IsOnline())
 				{
-					ManageTunnels ();
-					lastTs = ts;
-				}
+					uint64_t ts = i2p::util::GetSecondsSinceEpoch ();
+					if (ts - lastTs >= 15) // manage tunnels every 15 seconds
+					{
+						ManageTunnels ();
+						lastTs = ts;
+					}
+					if (ts - lastPoolsTs >= 5) // manage pools every 5 seconds
+					{
+						ManageTunnelPools (ts);
+						lastPoolsTs = ts;
+					}	
+				}	
 			}
 			catch (std::exception& ex)
 			{
@@ -567,7 +590,6 @@ namespace tunnel
 		ManageInboundTunnels ();
 		ManageOutboundTunnels ();
 		ManageTransitTunnels ();
-		ManageTunnelPools ();
 	}
 
 	void Tunnels::ManagePendingTunnels ()
@@ -779,16 +801,13 @@ namespace tunnel
 		}
 	}
 
-	void Tunnels::ManageTunnelPools ()
+	void Tunnels::ManageTunnelPools (uint64_t ts)
 	{
 		std::unique_lock<std::mutex> l(m_PoolsMutex);
 		for (auto& pool : m_Pools)
 		{
 			if (pool && pool->IsActive ())
-			{
-				pool->CreateTunnels ();
-				pool->TestTunnels ();
-			}
+				pool->ManageTunnels (ts);
 		}
 	}
 

@@ -88,9 +88,12 @@ namespace crypto
 			void GenerateKeys ();
 			const uint8_t * GetPublicKey () const { return m_PublicKey; };
 			void GetPrivateKey (uint8_t * priv) const;
-			void SetPrivateKey (const uint8_t * priv); // wihout calculating public
+			void SetPrivateKey (const uint8_t * priv, bool calculatePublic = false);
 			void Agree (const uint8_t * pub, uint8_t * shared);
 
+			bool IsElligatorIneligible () const { return m_IsElligatorIneligible; }
+			void SetElligatorIneligible () { m_IsElligatorIneligible = true; }
+			
 		private:
 
 			uint8_t m_PublicKey[32];
@@ -101,6 +104,7 @@ namespace crypto
 			BN_CTX * m_Ctx;
 			uint8_t m_PrivateKey[32];
 #endif
+			bool m_IsElligatorIneligible = false; // true if definitly ineligible
 	};
 
 	// ElGamal
@@ -165,9 +169,6 @@ namespace crypto
 
 
 #ifdef __AES__
-	#ifdef ARM64AES
-		void init_aesenc(void) __attribute__((constructor));
-	#endif
 	class ECBCryptoAESNI
 	{
 		public:
@@ -307,8 +308,18 @@ namespace crypto
 
 	void HKDF (const uint8_t * salt, const uint8_t * key, size_t keyLen, const std::string& info, uint8_t * out, size_t outLen = 64); // salt - 32, out - 32 or 64, info <= 32
 
+// Noise
+
+	struct NoiseSymmetricState
+	{
+		uint8_t m_H[32] /*h*/, m_CK[64] /*[ck, k]*/;
+
+		void MixHash (const uint8_t * buf, size_t len);
+		void MixKey (const uint8_t * sharedSecret);	
+	};
+
 // init and terminate
-	void InitCrypto (bool precomputation);
+	void InitCrypto (bool precomputation, bool aesni, bool avx, bool force);
 	void TerminateCrypto ();
 }
 }

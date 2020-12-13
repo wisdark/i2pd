@@ -57,6 +57,8 @@ namespace client
 	const int STREAM_REQUEST_TIMEOUT = 60; //in seconds
 	const char I2CP_PARAM_TAGS_TO_SEND[] = "crypto.tagsToSend";
 	const int DEFAULT_TAGS_TO_SEND = 40;
+	const char I2CP_PARAM_RATCHET_INBOUND_TAGS[] = "crypto.ratchet.inboundTags";
+	const char I2CP_PARAM_RATCHET_OUTBOUND_TAGS[] = "crypto.ratchet.outboundTags"; // not used yet
 	const char I2CP_PARAM_INBOUND_NICKNAME[] = "inbound.nickname";
 	const char I2CP_PARAM_OUTBOUND_NICKNAME[] = "outbound.nickname";
 	const char I2CP_PARAM_LEASESET_TYPE[] = "i2cp.leaseSetType";
@@ -76,6 +78,8 @@ namespace client
 	// streaming
 	const char I2CP_PARAM_STREAMING_INITIAL_ACK_DELAY[] = "i2p.streaming.initialAckDelay";
 	const int DEFAULT_INITIAL_ACK_DELAY = 200; // milliseconds
+	const char I2CP_PARAM_STREAMING_ANSWER_PINGS[] = "i2p.streaming.answerPings";
+	const int DEFAULT_ANSWER_PINGS = true; 
 
 	typedef std::function<void (std::shared_ptr<i2p::stream::Stream> stream)> StreamRequestComplete;
 
@@ -240,7 +244,8 @@ namespace client
 			bool IsAcceptingStreams () const;
 			void AcceptOnce (const i2p::stream::StreamingDestination::Acceptor& acceptor);
 			int GetStreamingAckDelay () const { return m_StreamingAckDelay; }
-
+			bool IsStreamingAnswerPings () const { return m_IsStreamingAnswerPings; }
+			
 			// datagram
 			i2p::datagram::DatagramDestination * GetDatagramDestination () const { return m_DatagramDestination; };
 			i2p::datagram::DatagramDestination * CreateDatagramDestination (bool gzip = true);
@@ -273,6 +278,7 @@ namespace client
 			std::unique_ptr<EncryptionKey> m_ECIESx25519EncryptionKey;
 
 			int m_StreamingAckDelay;
+			bool m_IsStreamingAnswerPings;
 			std::shared_ptr<i2p::stream::StreamingDestination> m_StreamingDestination; // default
 			std::map<uint16_t, std::shared_ptr<i2p::stream::StreamingDestination> > m_StreamingDestinationsByPorts;
 			i2p::datagram::DatagramDestination * m_DatagramDestination;

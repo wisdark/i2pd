@@ -36,7 +36,7 @@ namespace tunnel
 	const int TUNNEL_EXPIRATION_THRESHOLD = 60; // 1 minute
 	const int TUNNEL_RECREATION_THRESHOLD = 90; // 1.5 minutes
 	const int TUNNEL_CREATION_TIMEOUT = 30; // 30 seconds
-	const int STANDARD_NUM_RECORDS = 5; // in VariableTunnelBuild message
+	const int STANDARD_NUM_RECORDS = 4; // in VariableTunnelBuild message
 
 	enum TunnelState
 	{
@@ -230,7 +230,7 @@ namespace tunnel
 			void ManagePendingTunnels ();
 			template<class PendingTunnels>
 			void ManagePendingTunnels (PendingTunnels& pendingTunnels);
-			void ManageTunnelPools ();
+			void ManageTunnelPools (uint64_t ts);
 
 			std::shared_ptr<ZeroHopsInboundTunnel> CreateZeroHopsInboundTunnel ();
 			std::shared_ptr<ZeroHopsOutboundTunnel> CreateZeroHopsOutboundTunnel ();
@@ -249,7 +249,7 @@ namespace tunnel
 			std::list<std::shared_ptr<TunnelPool>> m_Pools;
 			std::shared_ptr<TunnelPool> m_ExploratoryPool;
 			i2p::util::Queue<std::shared_ptr<I2NPMessage> > m_Queue;
-
+			
 			// some stats
 			int m_NumSuccesiveTunnelCreations, m_NumFailedTunnelCreations;
 

@@ -54,6 +54,7 @@ namespace client
 	const char I2P_SERVER_TUNNEL_SIGNATURE_TYPE[] = "signaturetype";
 	const char I2P_SERVER_TUNNEL_INPORT[] = "inport";
 	const char I2P_SERVER_TUNNEL_ACCESS_LIST[] = "accesslist";
+	const char I2P_SERVER_TUNNEL_WHITE_LIST[] = "whitelist";
 	const char I2P_SERVER_TUNNEL_GZIP[] = "gzip";
 	const char I2P_SERVER_TUNNEL_WEBIRC_PASSWORD[] = "webircpassword";
 	const char I2P_SERVER_TUNNEL_ADDRESS[] = "address";
@@ -114,7 +115,7 @@ namespace client
 			template<typename Section>
 			void ReadI2CPOptionsGroup (const Section& section, const std::string& group,  std::map<std::string, std::string>& options) const;
 			template<typename Section>
-			void ReadI2CPOptions (const Section& section, std::map<std::string, std::string>& options) const; // for tunnels
+			void ReadI2CPOptions (const Section& section, bool isServer, std::map<std::string, std::string>& options) const; // for tunnels
 			void ReadI2CPOptionsFromConfig (const std::string& prefix, std::map<std::string, std::string>& options) const; // for HTTP and SOCKS proxy
 
 			void CleanupUDP(const boost::system::error_code & ecode);

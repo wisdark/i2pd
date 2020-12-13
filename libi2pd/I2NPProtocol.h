@@ -81,6 +81,26 @@ namespace i2p
 	const size_t BUILD_RESPONSE_RECORD_PADDING_SIZE = 495;
 	const size_t BUILD_RESPONSE_RECORD_RET_OFFSET = BUILD_RESPONSE_RECORD_PADDING_OFFSET + BUILD_RESPONSE_RECORD_PADDING_SIZE;
 
+	// ECIES BuildRequestRecordClearText
+	const size_t ECIES_BUILD_REQUEST_RECORD_RECEIVE_TUNNEL_OFFSET = 0;
+	const size_t ECIES_BUILD_REQUEST_RECORD_NEXT_TUNNEL_OFFSET = ECIES_BUILD_REQUEST_RECORD_RECEIVE_TUNNEL_OFFSET + 4;
+	const size_t ECIES_BUILD_REQUEST_RECORD_NEXT_IDENT_OFFSET = ECIES_BUILD_REQUEST_RECORD_NEXT_TUNNEL_OFFSET + 4;
+	const size_t ECIES_BUILD_REQUEST_RECORD_LAYER_KEY_OFFSET = ECIES_BUILD_REQUEST_RECORD_NEXT_IDENT_OFFSET + 32;
+	const size_t ECIES_BUILD_REQUEST_RECORD_IV_KEY_OFFSET = ECIES_BUILD_REQUEST_RECORD_LAYER_KEY_OFFSET + 32;
+	const size_t ECIES_BUILD_REQUEST_RECORD_REPLY_KEY_OFFSET = ECIES_BUILD_REQUEST_RECORD_IV_KEY_OFFSET + 32;
+	const size_t ECIES_BUILD_REQUEST_RECORD_REPLY_IV_OFFSET = ECIES_BUILD_REQUEST_RECORD_REPLY_KEY_OFFSET + 32;
+	const size_t ECIES_BUILD_REQUEST_RECORD_FLAG_OFFSET = ECIES_BUILD_REQUEST_RECORD_REPLY_IV_OFFSET + 16;
+	const size_t ECIES_BUILD_REQUEST_RECORD_MORE_FLAGS_OFFSET = ECIES_BUILD_REQUEST_RECORD_FLAG_OFFSET + 1;
+	const size_t ECIES_BUILD_REQUEST_RECORD_REQUEST_TIME_OFFSET = ECIES_BUILD_REQUEST_RECORD_MORE_FLAGS_OFFSET + 3;
+	const size_t ECIES_BUILD_REQUEST_RECORD_REQUEST_EXPIRATION_OFFSET = ECIES_BUILD_REQUEST_RECORD_REQUEST_TIME_OFFSET + 4;
+	const size_t ECIES_BUILD_REQUEST_RECORD_SEND_MSG_ID_OFFSET = ECIES_BUILD_REQUEST_RECORD_REQUEST_EXPIRATION_OFFSET + 4;
+	const size_t ECIES_BUILD_REQUEST_RECORD_PADDING_OFFSET = ECIES_BUILD_REQUEST_RECORD_SEND_MSG_ID_OFFSET + 4;
+	const size_t ECIES_BUILD_REQUEST_RECORD_CLEAR_TEXT_SIZE = 464;
+
+	// ECIES BuildResponseRecord
+	const size_t ECIES_BUILD_RESPONSE_RECORD_OPTIONS_OFFSET = 0;
+	const size_t ECIES_BUILD_RESPONSE_RECORD_RET_OFFSET = 511;
+	
 	enum I2NPMessageType
 	{
 		eI2NPDummyMsg = 0,
@@ -251,8 +271,9 @@ namespace tunnel
 	std::shared_ptr<I2NPMessage> CreateRouterInfoDatabaseLookupMsg (const uint8_t * key, const uint8_t * from,
 		uint32_t replyTunnelID, bool exploratory = false, std::set<i2p::data::IdentHash> * excludedPeers = nullptr);
 	std::shared_ptr<I2NPMessage> CreateLeaseSetDatabaseLookupMsg (const i2p::data::IdentHash& dest,
-		const std::set<i2p::data::IdentHash>& excludedFloodfills,
-		std::shared_ptr<const i2p::tunnel::InboundTunnel> replyTunnel, const uint8_t * replyKey, const uint8_t * replyTag);
+		const std::set<i2p::data::IdentHash>& excludedFloodfills, 
+	    std::shared_ptr<const i2p::tunnel::InboundTunnel> replyTunnel, 
+	    const uint8_t * replyKey, const uint8_t * replyTag, bool replyECIES = false);
 	std::shared_ptr<I2NPMessage> CreateDatabaseSearchReply (const i2p::data::IdentHash& ident, std::vector<i2p::data::IdentHash> routers);
 
 	std::shared_ptr<I2NPMessage> CreateDatabaseStoreMsg (std::shared_ptr<const i2p::data::RouterInfo> router = nullptr, uint32_t replyToken = 0);
