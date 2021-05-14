@@ -19,6 +19,7 @@
 #include "Identity.h"
 #include "Config.h"
 #include "version.h"
+#include "Log.h"
 
 using namespace boost::program_options;
 
@@ -50,7 +51,9 @@ namespace config {
 			("nat", bool_switch()->default_value(true),                       "Should we assume we are behind NAT? (default: enabled)")
 			("port", value<uint16_t>()->default_value(0),                     "Port to listen for incoming connections (default: auto)")
 			("ipv4", bool_switch()->default_value(true),                      "Enable communication through ipv4 (default: enabled)")
+			("address4", value<std::string>()->default_value(""),             "Local address to bind ipv4 transport sockets to")
 			("ipv6", bool_switch()->default_value(false),                     "Enable communication through ipv6 (default: disabled)")
+			("address6", value<std::string>()->default_value(""),             "Local address to bind ipv6 transport sockets to")
 			("reservedrange", bool_switch()->default_value(true),             "Check remote RI for being in blacklist of reserved IP ranges (default: enabled)")
 			("netid", value<int>()->default_value(I2PD_NET_ID),               "Specify NetID. Main I2P is 2")
 			("daemon", bool_switch()->default_value(false),                   "Router will go to background after start (default: disabled)")
@@ -63,7 +66,7 @@ namespace config {
 			("ssu", bool_switch()->default_value(true),                       "Enable SSU transport (default: enabled)")
 			("ntcpproxy", value<std::string>()->default_value(""),            "Ignored")
 #ifdef _WIN32
-			("svcctl", value<std::string>()->default_value(""),               "Windows service management ('install' or 'remove')")
+			("svcctl", value<std::string>()->default_value(""),               "Ignored")
 			("insomnia", bool_switch()->default_value(false),                 "Prevent system from sleeping (default: disabled)")
 			("close", value<std::string>()->default_value("ask"),             "Action on close: minimize, exit, ask")
 #endif
@@ -205,19 +208,23 @@ namespace config {
 				"https://reseed.i2pgit.org/,"
 				"https://i2p.novg.net/"
 			),                                                            "Reseed URLs, separated by comma")
+			("reseed.yggurls", value<std::string>()->default_value(
+				"http://[324:9de3:fea4:f6ac::ace]:7070/"
+			),                                                            "Reseed URLs through the Yggdrasil, separated by comma")
 		;
 
 		options_description addressbook("AddressBook options");
 		addressbook.add_options()
 			("addressbook.defaulturl", value<std::string>()->default_value(
-				"http://joajgazyztfssty4w2on5oaqksz6tqoxbduy553y34mf4byv6gpq.b32.i2p/export/alive-hosts.txt"
+				"http://shx5vqsw7usdaunyzr2qmes2fq37oumybpudrd4jjj4e4vk4uusa.b32.i2p/hosts.txt"
 			),                                                                     "AddressBook subscription URL for initial setup")
-			("addressbook.subscriptions", value<std::string>()->default_value(""), "AddressBook subscriptions URLs, separated by comma");
+			("addressbook.subscriptions", value<std::string>()->default_value(""), "AddressBook subscriptions URLs, separated by comma")
+			("addressbook.hostsfile", value<std::string>()->default_value(""),     "File to dump addresses in hosts.txt format");
 
 		options_description trust("Trust options");
 		trust.add_options()
 			("trust.enabled", value<bool>()->default_value(false),     "Enable explicit trust options")
-			("trust.family", value<std::string>()->default_value(""),  "Router Familiy to trust for first hops")
+			("trust.family", value<std::string>()->default_value(""),  "Router Family to trust for first hops")
 			("trust.routers", value<std::string>()->default_value(""), "Only Connect to these routers")
 			("trust.hidden", value<bool>()->default_value(false),      "Should we hide our router from other routers?")
 		;
@@ -243,7 +250,7 @@ namespace config {
 			("ntcp2.enabled", value<bool>()->default_value(true),          "Enable NTCP2 (default: enabled)")
 			("ntcp2.published", value<bool>()->default_value(true),        "Publish NTCP2 (default: enabled)")
 			("ntcp2.port", value<uint16_t>()->default_value(0),            "Port to listen for incoming NTCP2 connections (default: auto)")
-			("ntcp2.addressv6", value<std::string>()->default_value("::"), "Address to bind NTCP2 on")
+			("ntcp2.addressv6", value<std::string>()->default_value("::"), "Address to publish NTCP2 with")
 			("ntcp2.proxy", value<std::string>()->default_value(""),       "Proxy URL for NTCP2 transport")
 		;
 
@@ -272,6 +279,12 @@ namespace config {
 			("cpuext.force", bool_switch()->default_value(false),                    "Force usage of CPU extensions. Useful when cpuinfo is not available on virtual machines")
 		;
 
+		options_description meshnets("Meshnet transports options");
+		meshnets.add_options()
+			("meshnets.yggdrasil", bool_switch()->default_value(false),              "Support transports through the Yggdrasil (deafult: false)")
+			("meshnets.yggaddress", value<std::string>()->default_value(""),         "Yggdrasil address to publish")
+		;
+
 		m_OptionsDesc
 			.add(general)
 			.add(limits)
@@ -293,6 +306,7 @@ namespace config {
 			.add(nettime)
 			.add(persist)
 			.add(cpuext)
+			.add(meshnets)
 		;
 	}
 
@@ -301,7 +315,7 @@ namespace config {
 		try
 		{
 			auto style = boost::program_options::command_line_style::unix_style
-				| boost::program_options::command_line_style::allow_long_disguise;
+			           | boost::program_options::command_line_style::allow_long_disguise;
 			style &=   ~ boost::program_options::command_line_style::allow_guessing;
 			if (ignoreUnknown)
 				store(command_line_parser(argc, argv).options(m_OptionsDesc).style (style).allow_unregistered().run(), m_Options);
@@ -310,6 +324,7 @@ namespace config {
 		}
 		catch (boost::program_options::error& e)
 		{
+			ThrowFatal ("Error while parsing arguments: ", e.what());
 			std::cerr << "args: " << e.what() << std::endl;
 			exit(EXIT_FAILURE);
 		}
@@ -347,6 +362,7 @@ namespace config {
 
 		if (!config.is_open())
 		{
+			ThrowFatal ("Missing or unreadable config file: ", path);
 			std::cerr << "missing/unreadable config file: " << path << std::endl;
 			exit(EXIT_FAILURE);
 		}
@@ -357,6 +373,7 @@ namespace config {
 		}
 		catch (boost::program_options::error& e)
 		{
+			ThrowFatal ("Error while parsing config file: ", e.what());
 			std::cerr << e.what() << std::endl;
 			exit(EXIT_FAILURE);
 		};

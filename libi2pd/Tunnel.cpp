@@ -22,6 +22,7 @@
 #include "Config.h"
 #include "Tunnel.h"
 #include "TunnelPool.h"
+#include "util.h"
 
 namespace i2p
 {
@@ -41,8 +42,8 @@ namespace tunnel
 	void Tunnel::Build (uint32_t replyMsgID, std::shared_ptr<OutboundTunnel> outboundTunnel)
 	{
 		auto numHops = m_Config->GetNumHops ();
-		int numRecords = numHops <= STANDARD_NUM_RECORDS ? STANDARD_NUM_RECORDS : numHops;
-		auto msg = NewI2NPShortMessage ();
+		int numRecords = numHops <= STANDARD_NUM_RECORDS ? STANDARD_NUM_RECORDS : MAX_NUM_RECORDS;
+		auto msg = numRecords <= STANDARD_NUM_RECORDS ? NewI2NPShortMessage () : NewI2NPMessage ();
 		*msg->GetPayload () = numRecords;
 		msg->len += numRecords*TUNNEL_BUILD_RECORD_SIZE + 1;
 		// shuffle records
@@ -472,6 +473,7 @@ namespace tunnel
 
 	void Tunnels::Run ()
 	{
+		i2p::util::SetThreadName("Tunnels");
 		std::this_thread::sleep_for (std::chrono::seconds(1)); // wait for other parts are ready
 
 		uint64_t lastTs = 0, lastPoolsTs = 0;
@@ -696,7 +698,7 @@ namespace tunnel
 			auto inboundTunnel = GetNextInboundTunnel ();
 			auto router = i2p::transport::transports.RoutesRestricted() ?
 				i2p::transport::transports.GetRestrictedPeer() :
-				i2p::data::netdb.GetRandomRouter ();
+				i2p::data::netdb.GetRandomRouter (i2p::context.GetSharedRouterInfo (), false); // reachable by us
 			if (!inboundTunnel || !router) return;
 			LogPrint (eLogDebug, "Tunnel: creating one hop outbound tunnel");
 			CreateTunnel<OutboundTunnel> (
@@ -769,7 +771,8 @@ namespace tunnel
 			// trying to create one more inbound tunnel
 			auto router = i2p::transport::transports.RoutesRestricted() ?
 				i2p::transport::transports.GetRestrictedPeer() :
-				i2p::data::netdb.GetRandomRouter ();
+				// should be reachable by us because we send build request directly
+				i2p::data::netdb.GetRandomRouter (i2p::context.GetSharedRouterInfo (), false);
 			if (!router) {
 				LogPrint (eLogWarning, "Tunnel: can't find any router, skip creating tunnel");
 				return;

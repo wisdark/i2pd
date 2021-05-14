@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2020, The PurpleI2P Project
+* Copyright (c) 2013-2021, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -32,16 +32,19 @@
 namespace i2p {
 namespace proxy {
 	std::map<std::string, std::string> jumpservices = {
-		{ "inr.i2p",    "http://joajgazyztfssty4w2on5oaqksz6tqoxbduy553y34mf4byv6gpq.b32.i2p/search/?q=" },
-		{ "stats.i2p",  "http://7tbay5p4kzeekxvyvbf6v7eauazemsnnl2aoyqhg5jzpr5eke7tq.b32.i2p/cgi-bin/jump.cgi?a=" },
+		{ "reg.i2p",       "http://shx5vqsw7usdaunyzr2qmes2fq37oumybpudrd4jjj4e4vk4uusa.b32.i2p/jump/" },
+		{ "identiguy.i2p", "http://3mzmrus2oron5fxptw7hw2puho3bnqmw2hqy7nw64dsrrjwdilva.b32.i2p/cgi-bin/query?hostname=" },
+		{ "stats.i2p",     "http://7tbay5p4kzeekxvyvbf6v7eauazemsnnl2aoyqhg5jzpr5eke7tq.b32.i2p/cgi-bin/jump.cgi?a=" },
 	};
 
 	static const char *pageHead =
 		"<head>\r\n"
+		"  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\r\n"
 		"  <title>I2Pd HTTP proxy</title>\r\n"
 		"  <style type=\"text/css\">\r\n"
 		"    body { font: 100%/1.5em sans-serif; margin: 0; padding: 1.5em; background: #FAFAFA; color: #103456; }\r\n"
-		"    .header { font-size: 2.5em; text-align: center; margin: 1.5em 0; color: #894C84; }\r\n"
+		"    h1 { font-size: 1.7em; color: #894C84; }\r\n"
+		"    @media screen and (max-width: 980px) { h1 { font-size: 1.7em; text-align: center; color: #894C84; }}\r\n"
 		"  </style>\r\n"
 		"</head>\r\n"
 	;
@@ -430,13 +433,13 @@ namespace proxy {
 			if (m_ProxyURL.is_i2p())
 			{
 				m_ClientRequest.uri = origURI;
-				if (!m_ProxyURL.user.empty () || !m_ProxyURL.pass.empty ())
+				auto auth = i2p::http::CreateBasicAuthorizationString (m_ProxyURL.user, m_ProxyURL.pass);
+				if (!auth.empty ())
 				{
 					// remove existing authorization if any
 					m_ClientRequest.RemoveHeader("Proxy-");
 					// add own http proxy authorization
-					std::string s = "Basic " + i2p::data::ToBase64Standard (m_ProxyURL.user + ":" + m_ProxyURL.pass);
-					m_ClientRequest.AddHeader("Proxy-Authorization", s);
+					m_ClientRequest.AddHeader("Proxy-Authorization", auth);
 				}
 				m_send_buf = m_ClientRequest.to_string();
 				m_recv_buf.erase(0, m_req_len);

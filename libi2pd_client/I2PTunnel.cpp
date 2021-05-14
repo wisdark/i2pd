@@ -12,6 +12,7 @@
 #include "Destination.h"
 #include "ClientContext.h"
 #include "I2PTunnel.h"
+#include "util.h"
 
 namespace i2p
 {
@@ -106,6 +107,22 @@ namespace client
 		}
 	}
 
+	void I2PTunnelConnection::Connect (const boost::asio::ip::address& localAddress)
+	{
+		if (m_Socket)
+		{
+			if (m_RemoteEndpoint.address().is_v6 ())
+				m_Socket->open (boost::asio::ip::tcp::v6 ());
+			else
+				m_Socket->open (boost::asio::ip::tcp::v4 ());
+			boost::system::error_code ec;
+			m_Socket->bind (boost::asio::ip::tcp::endpoint (localAddress, 0), ec);
+			if (ec)
+				LogPrint (eLogError, "I2PTunnel: can't bind to ", localAddress.to_string (), ": ", ec.message ());	
+		}	
+		Connect (false);
+	}	
+		
 	void I2PTunnelConnection::Terminate ()
 	{
 		if (Kill()) return;
@@ -599,6 +616,16 @@ namespace client
 		m_IsAccessList = true;
 	}
 
+	void I2PServerTunnel::SetLocalAddress (const std::string& localAddress)
+	{
+		boost::system::error_code ec;
+		auto addr = boost::asio::ip::address::from_string(localAddress, ec);
+		if (!ec)
+			m_LocalAddress.reset (new boost::asio::ip::address (addr));
+		else
+			LogPrint (eLogError, "I2PTunnel: can't set local address ", localAddress);
+	}	
+		
 	void I2PServerTunnel::Accept ()
 	{
 		if (m_PortDestination)
@@ -630,7 +657,10 @@ namespace client
 			// new connection
 			auto conn = CreateI2PConnection (stream);
 			AddHandler (conn);
-			conn->Connect (m_IsUniqueLocal);
+			if (m_LocalAddress)
+				conn->Connect (*m_LocalAddress);
+			else	
+				conn->Connect (m_IsUniqueLocal);
 		}
 	}
 
@@ -862,7 +892,7 @@ namespace client
 			std::placeholders::_3, std::placeholders::_4,
 			std::placeholders::_5));
 		dgram->SetRawReceiver(std::bind(&I2PUDPClientTunnel::HandleRecvFromI2PRaw, this,
-			std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));	
+			std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
 	}
 
 	void I2PUDPClientTunnel::Start() {
@@ -891,11 +921,11 @@ namespace client
 		}
 		auto remotePort = m_RecvEndpoint.port();
 		if (!m_LastPort || m_LastPort != remotePort)
-		{	
+		{
 			auto itr = m_Sessions.find(remotePort);
-			if (itr != m_Sessions.end()) 
+			if (itr != m_Sessions.end())
 				m_LastSession = itr->second;
-			else	
+			else
 			{
 				m_LastSession = std::make_shared<UDPConvo>(boost::asio::ip::udp::endpoint(m_RecvEndpoint), 0);
 				m_Sessions.emplace (remotePort, m_LastSession);
@@ -940,6 +970,7 @@ namespace client
 	}
 
 	void I2PUDPClientTunnel::TryResolving() {
+		i2p::util::SetThreadName("UDP Resolver");
 		LogPrint(eLogInfo, "UDP Tunnel: Trying to resolve ", m_RemoteDest);
 
 		std::shared_ptr<const Address> addr;

@@ -701,7 +701,7 @@ namespace stream
 		size++; // resend delay
 		htobe16buf (packet + size, PACKET_FLAG_CLOSE | PACKET_FLAG_SIGNATURE_INCLUDED);
 		size += 2; // flags
-		size_t signatureLen = m_LocalDestination.GetOwner ()->GetIdentity ()->GetSignatureLen ();
+		size_t signatureLen = m_LocalDestination.GetOwner ()->GetPrivateKeys ().GetSignatureLen ();
 		htobe16buf (packet + size, signatureLen); // signature only
 		size += 2; // options size
 		uint8_t * signature = packet + size;
@@ -764,7 +764,7 @@ namespace stream
 				return;
 			}
 		}
-		if (!m_RoutingSession || !m_RoutingSession->GetOwner () || !m_RoutingSession->IsReadyToSend ()) // expired and detached or new session sent
+		if (!m_RoutingSession || m_RoutingSession->IsTerminated () || !m_RoutingSession->IsReadyToSend ()) // expired and detached or new session sent
 			m_RoutingSession = m_LocalDestination.GetOwner ()->GetRoutingSession (m_RemoteLeaseSet, true);
 		if (!m_CurrentOutboundTunnel && m_RoutingSession) // first message to send
 		{
@@ -817,7 +817,7 @@ namespace stream
 
 	void Stream::SendUpdatedLeaseSet ()
 	{
-		if (m_RoutingSession)
+		if (m_RoutingSession && !m_RoutingSession->IsTerminated ())
 		{
 			if (m_RoutingSession->IsLeaseSetNonConfirmed ())
 			{
@@ -838,6 +838,8 @@ namespace stream
 				SendQuickAck ();
 			}
 		}
+		else
+			SendQuickAck ();
 	}
 
 	void Stream::ScheduleResend ()

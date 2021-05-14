@@ -39,7 +39,7 @@ else ifneq (, $(findstring freebsd, $(SYS))$(findstring openbsd, $(SYS)))
 	DAEMON_SRC += $(DAEMON_SRC_DIR)/UnixDaemon.cpp
 	include Makefile.bsd
 else ifneq (, $(findstring mingw, $(SYS))$(findstring cygwin, $(SYS)))
-	DAEMON_SRC += Win32/DaemonWin32.cpp Win32/Win32Service.cpp Win32/Win32App.cpp Win32/Win32NetState.cpp
+	DAEMON_SRC += Win32/DaemonWin32.cpp Win32/Win32App.cpp Win32/Win32NetState.cpp
 	include Makefile.mingw
 else # not supported
 	$(error Not supported platform)
@@ -66,6 +66,7 @@ mk_obj_dir:
 	@mkdir -p obj/$(DAEMON_SRC_DIR)
 
 api: mk_obj_dir $(SHLIB) $(ARLIB)
+client: mk_obj_dir $(SHLIB_CLIENT) $(ARLIB_CLIENT)
 api_client: mk_obj_dir $(SHLIB) $(ARLIB) $(SHLIB_CLIENT) $(ARLIB_CLIENT)
 
 ## NOTE: The NEEDED_CXXFLAGS are here so that CXXFLAGS can be specified at build time
@@ -128,6 +129,7 @@ doxygen:
 .PHONY: last-dist
 .PHONY: api
 .PHONY: api_client
+.PHONY: client
 .PHONY: mk_obj_dir
 .PHONY: install
 .PHONY: strip

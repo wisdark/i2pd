@@ -89,7 +89,7 @@ namespace crypto
 			const uint8_t * GetPublicKey () const { return m_PublicKey; };
 			void GetPrivateKey (uint8_t * priv) const;
 			void SetPrivateKey (const uint8_t * priv, bool calculatePublic = false);
-			void Agree (const uint8_t * pub, uint8_t * shared);
+			bool Agree (const uint8_t * pub, uint8_t * shared);
 
 			bool IsElligatorIneligible () const { return m_IsElligatorIneligible; }
 			void SetElligatorIneligible () { m_IsElligatorIneligible = true; }
@@ -318,6 +318,10 @@ namespace crypto
 		void MixKey (const uint8_t * sharedSecret);	
 	};
 
+	void InitNoiseNState (NoiseSymmetricState& state, const uint8_t * pub); // Noise_N (tunnels, router)
+	void InitNoiseXKState (NoiseSymmetricState& state, const uint8_t * pub); // Noise_XK (NTCP2)
+	void InitNoiseIKState (NoiseSymmetricState& state, const uint8_t * pub); // Noise_IK (ratchets)
+	
 // init and terminate
 	void InitCrypto (bool precomputation, bool aesni, bool avx, bool force);
 	void TerminateCrypto ();

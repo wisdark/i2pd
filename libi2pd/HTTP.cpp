@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2020, The PurpleI2P Project
+* Copyright (c) 2013-2021, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -9,12 +9,15 @@
 #include <algorithm>
 #include <utility>
 #include <stdio.h>
-#include "util.h"
-#include "HTTP.h"
 #include <ctime>
+#include "util.h"
+#include "Base.h"
+#include "HTTP.h"
 
-namespace i2p {
-namespace http {
+namespace i2p 
+{
+namespace http 
+{
 	const std::vector<std::string> HTTP_METHODS = {
 		"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "CONNECT", // HTTP basic methods
 		"COPY", "LOCK", "MKCOL", "MOVE", "PROPFIND", "PROPPATCH", "UNLOCK", "SEARCH" // WebDAV methods, for SEARCH see rfc5323
@@ -111,7 +114,14 @@ namespace http {
 				pos_p = pos_c + 1;
 			}
 			/* hostname[:port][/path] */
-			pos_c = url.find_first_of(":/", pos_p);
+			if (url[pos_p] == '[') // ipv6
+			{
+				auto pos_b = url.find(']', pos_p);
+				if (pos_b == std::string::npos) return false;
+				pos_c = url.find_first_of(":/", pos_b);
+			}
+			else
+				pos_c = url.find_first_of(":/", pos_p);
 			if (pos_c == std::string::npos) {
 				/* only hostname, without post and path */
 				host = url.substr(pos_p, std::string::npos);
@@ -339,7 +349,7 @@ namespace http {
 		auto it = headers.find("Transfer-Encoding");
 		if (it == headers.end())
 			return false;
-		if (it->second.find("chunked") == std::string::npos)
+		if (it->second.find("chunked") != std::string::npos)
 			return true;
 		return false;
 	}
@@ -464,12 +474,15 @@ namespace http {
 		return ptr;
 	}
 
-	std::string UrlDecode(const std::string& data, bool allow_null) {
+	std::string UrlDecode(const std::string& data, bool allow_null) 
+	{
 		std::string decoded(data);
 		size_t pos = 0;
-		while ((pos = decoded.find('%', pos)) != std::string::npos) {
+		while ((pos = decoded.find('%', pos)) != std::string::npos) 
+		{
 			char c = strtol(decoded.substr(pos + 1, 2).c_str(), NULL, 16);
-			if (c == '\0' && !allow_null) {
+			if (c == '\0' && !allow_null) 
+			{
 				pos += 3;
 				continue;
 			}
@@ -479,9 +492,11 @@ namespace http {
 		return decoded;
 	}
 
-	bool MergeChunkedResponse (std::istream& in, std::ostream& out) {
+	bool MergeChunkedResponse (std::istream& in, std::ostream& out) 
+	{
 		std::string hexLen;
-		while (!in.eof ()) {
+		while (!in.eof ()) 
+		{
 			std::getline (in, hexLen);
 			errno = 0;
 			long int len = strtoul(hexLen.c_str(), (char **) NULL, 16);
@@ -499,5 +514,12 @@ namespace http {
 		}
 		return true;
 	}
+
+	std::string CreateBasicAuthorizationString (const std::string& user, const std::string& pass)
+	{
+		if (user.empty () && pass.empty ()) return "";
+		return "Basic " + i2p::data::ToBase64Standard (user + ":" + pass);
+	}
+	
 } // http
 } // i2p

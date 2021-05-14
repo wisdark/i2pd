@@ -21,6 +21,11 @@
 
 namespace i2p
 {
+namespace garlic
+{
+	class RouterIncomingRatchetSession;
+}	
+
 	const char ROUTER_INFO[] = "router.info";
 	const char ROUTER_KEYS[] = "router.keys";
 	const char NTCP2_KEYS[] = "ntcp2.keys";
@@ -31,16 +36,20 @@ namespace i2p
 		eRouterStatusOK = 0,
 		eRouterStatusTesting = 1,
 		eRouterStatusFirewalled = 2,
-		eRouterStatusError = 3
+		eRouterStatusError = 3,
+		eRouterStatusUnknown = 4,
+		eRouterStatusProxy = 5,
+		eRouterStatusMesh = 6	
 	};
 
 	enum RouterError
 	{
 		eRouterErrorNone = 0,
 		eRouterErrorClockSkew = 1,
-		eRouterErrorOffline = 2 
+		eRouterErrorOffline = 2,
+		eRouterErrorSymmetricNAT = 3
 	};
-
+	
 	class RouterContext: public i2p::garlic::GarlicDestination
 	{
 		private:
@@ -107,8 +116,10 @@ namespace i2p
 			void SetAcceptsTunnels (bool acceptsTunnels) { m_AcceptsTunnels = acceptsTunnels; };
 			bool SupportsV6 () const { return m_RouterInfo.IsV6 (); };
 			bool SupportsV4 () const { return m_RouterInfo.IsV4 (); };
+			bool SupportsMesh () const { return m_RouterInfo.IsMesh (); };
 			void SetSupportsV6 (bool supportsV6);
 			void SetSupportsV4 (bool supportsV4);
+			void SetSupportsMesh (bool supportsmesh, const boost::asio::ip::address_v6& host);
 			bool IsECIES () const { return GetIdentity ()->GetCryptoKeyType () == i2p::data::CRYPTO_KEY_TYPE_ECIES_X25519_AEAD; };
 			std::unique_ptr<i2p::crypto::NoiseSymmetricState>& GetCurrentNoiseState () { return m_CurrentNoiseState; };
 			
@@ -150,7 +161,8 @@ namespace i2p
 
 			i2p::data::RouterInfo m_RouterInfo;
 			i2p::data::PrivateKeys m_Keys;
-			std::shared_ptr<i2p::crypto::CryptoKeyDecryptor> m_Decryptor;
+			std::shared_ptr<i2p::crypto::CryptoKeyDecryptor> m_Decryptor, m_TunnelDecryptor;
+			std::shared_ptr<i2p::garlic::RouterIncomingRatchetSession> m_ECIESSession;
 			uint64_t m_LastUpdateTime; // in seconds
 			bool m_AcceptsTunnels, m_IsFloodfill;
 			std::chrono::time_point<std::chrono::steady_clock> m_StartupTime;

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2020, The PurpleI2P Project
+* Copyright (c) 2013-2021, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -26,6 +26,7 @@
 #include "ECIESX25519AEADRatchetSession.h"
 #include "Config.h"
 #include "NetDb.hpp"
+#include "util.h"
 
 using namespace i2p::transport;
 
@@ -56,7 +57,9 @@ namespace data
 		uint16_t threshold; i2p::config::GetOption("reseed.threshold", threshold);
 		if (m_RouterInfos.size () < threshold) // reseed if # of router less than threshold
 			Reseed ();
-
+		else if (!GetRandomRouter (i2p::context.GetSharedRouterInfo (), false))
+			Reseed (); // we don't have a router we can connect to. Trying to reseed
+		
 		i2p::config::GetOption("persist.profiles", m_PersistProfiles);
 
 		m_IsRunning = true;
@@ -88,6 +91,8 @@ namespace data
 
 	void NetDb::Run ()
 	{
+		i2p::util::SetThreadName("NetDB");
+
 		uint32_t lastSave = 0, lastPublish = 0, lastExploratory = 0, lastManageRequest = 0, lastDestinationCleanup = 0;
 		while (m_IsRunning)
 		{
@@ -113,7 +118,7 @@ namespace data
 							break;
 							case eI2NPDeliveryStatus:
 								HandleDeliveryStatusMsg (msg);
-							break;	
+							break;
 							case eI2NPDummyMsg:
 								// plain RouterInfo from NTCP2 with flags for now
 								HandleNTCP2RouterInfoMsg (msg);
@@ -155,12 +160,12 @@ namespace data
 				if (!m_HiddenMode && i2p::transport::transports.IsOnline ()) 
 				{
 					bool publish = false;
-				    if (m_PublishReplyToken)
-					{	
+					if (m_PublishReplyToken)
+					{
 						if (ts - lastPublish >= NETDB_PUBLISH_CONFIRMATION_TIMEOUT) publish = true;
 					}
 					else if (i2p::context.GetLastUpdateTime () > lastPublish || 
-				    	ts - lastPublish >= NETDB_PUBLISH_INTERVAL) publish = true;
+						ts - lastPublish >= NETDB_PUBLISH_INTERVAL) publish = true;
 					if (publish) // update timestamp and publish
 					{
 						i2p::context.UpdateTimestamp (ts);
@@ -640,6 +645,9 @@ namespace data
 		auto floodfill = GetClosestFloodfill (destination, dest->GetExcludedPeers ());
 		if (floodfill)
 		{
+			if (direct && !floodfill->IsReachableFrom (i2p::context.GetRouterInfo ()) &&
+			    !i2p::transport::transports.IsConnected (floodfill->GetIdentHash ())) 
+				direct = false; // floodfill can't be reached directly
 			if (direct)
 				transports.SendMessage (floodfill->GetIdentHash (), dest->CreateRequestMessage (floodfill->GetIdentHash ()));
 			else
@@ -1084,7 +1092,20 @@ namespace data
 			LogPrint (eLogInfo, "NetDb: Publishing our RouterInfo to ", i2p::data::GetIdentHashAbbreviation(floodfill->GetIdentHash ()), ". reply token=", replyToken);
 			m_PublishExcluded.insert (floodfill->GetIdentHash ());
 			m_PublishReplyToken = replyToken;
-			transports.SendMessage (floodfill->GetIdentHash (), CreateDatabaseStoreMsg (i2p::context.GetSharedRouterInfo (), replyToken));
+			if (floodfill->IsReachableFrom (i2p::context.GetRouterInfo ()) || // are we able to connect?
+			    i2p::transport::transports.IsConnected (floodfill->GetIdentHash ()))  // already connected ?    
+				// send directly
+				transports.SendMessage (floodfill->GetIdentHash (), CreateDatabaseStoreMsg (i2p::context.GetSharedRouterInfo (), replyToken));
+			else
+			{
+				// otherwise through exploratory	
+				auto exploratoryPool = i2p::tunnel::tunnels.GetExploratoryPool ();
+				auto outbound = exploratoryPool ? exploratoryPool->GetNextOutboundTunnel () : nullptr;
+				auto inbound = exploratoryPool ? exploratoryPool->GetNextInboundTunnel () : nullptr;	
+				if (inbound && outbound)
+					outbound->SendTunnelDataMsg (floodfill->GetIdentHash (), 0, 
+						CreateDatabaseStoreMsg (i2p::context.GetSharedRouterInfo (), replyToken, inbound));	
+			}		
 		}
 	}
 
@@ -1117,13 +1138,14 @@ namespace data
 			});
 	}
 
-	std::shared_ptr<const RouterInfo> NetDb::GetRandomRouter (std::shared_ptr<const RouterInfo> compatibleWith) const
+	std::shared_ptr<const RouterInfo> NetDb::GetRandomRouter (std::shared_ptr<const RouterInfo> compatibleWith, bool reverse) const
 	{
 		return GetRandomRouter (
-			[compatibleWith](std::shared_ptr<const RouterInfo> router)->bool
+			[compatibleWith, reverse](std::shared_ptr<const RouterInfo> router)->bool
 			{
 				return !router->IsHidden () && router != compatibleWith &&
-					router->IsCompatible (*compatibleWith);
+					(reverse ? compatibleWith->IsReachableFrom (*router) :
+						router->IsReachableFrom (*compatibleWith));
 			});
 	}
 
@@ -1132,7 +1154,7 @@ namespace data
 		return GetRandomRouter (
 			[v4only](std::shared_ptr<const RouterInfo> router)->bool
 			{
-				return !router->IsHidden () && router->IsPeerTesting () && router->IsSSU (v4only);
+				return !router->IsHidden () && router->IsPeerTesting (v4only);
 			});
 	}
 
@@ -1150,17 +1172,18 @@ namespace data
 		return GetRandomRouter (
 			[](std::shared_ptr<const RouterInfo> router)->bool
 			{
-				return !router->IsHidden () && router->IsIntroducer ();
+				return router->IsIntroducer () && !router->IsHidden () && !router->IsFloodfill (); // floodfills don't send relay tag
 			});
 	}
 
-	std::shared_ptr<const RouterInfo> NetDb::GetHighBandwidthRandomRouter (std::shared_ptr<const RouterInfo> compatibleWith) const
+	std::shared_ptr<const RouterInfo> NetDb::GetHighBandwidthRandomRouter (std::shared_ptr<const RouterInfo> compatibleWith, bool reverse) const
 	{
 		return GetRandomRouter (
-			[compatibleWith](std::shared_ptr<const RouterInfo> router)->bool
+			[compatibleWith, reverse](std::shared_ptr<const RouterInfo> router)->bool
 			{
 				return !router->IsHidden () && router != compatibleWith &&
-					router->IsCompatible (*compatibleWith) &&
+					(reverse ? compatibleWith->IsReachableFrom (*router) :
+						router->IsReachableFrom (*compatibleWith)) &&
 					(router->GetCaps () & RouterInfo::eHighBandwidth) &&
 					router->GetVersion () >= NETDB_MIN_HIGHBANDWIDTH_VERSION;
 			});

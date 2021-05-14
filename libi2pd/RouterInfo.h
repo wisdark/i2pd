@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2020, The PurpleI2P Project
+* Copyright (c) 2013-2021, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -44,9 +44,16 @@ namespace data
 	const char CAPS_FLAG_EXTRA_BANDWIDTH1 = 'P'; /* 256-2000 KBps */
 	const char CAPS_FLAG_EXTRA_BANDWIDTH2 = 'X'; /*   > 2000 KBps */
 
+	const char CAPS_FLAG_V4 = '4';
+	const char CAPS_FLAG_V6 = '6';
 	const char CAPS_FLAG_SSU_TESTING = 'B';
 	const char CAPS_FLAG_SSU_INTRODUCER = 'C';
 
+	const uint8_t COST_NTCP2_PUBLISHED = 3;
+	const uint8_t COST_NTCP2_NON_PUBLISHED = 14;
+	const uint8_t COST_SSU_DIRECT = 9;
+	const uint8_t COST_SSU_THROUGH_INTRODUCERS = 11;
+	
 	const int MAX_RI_BUFFER_SIZE = 2048; // if RouterInfo exceeds 2048 we consider it as malformed, might be changed later
 	class RouterInfo: public RoutingDestination
 	{
@@ -54,12 +61,11 @@ namespace data
 
 			enum SupportedTranports
 			{
-				eNTCPV4 = 0x01,
-				eNTCPV6 = 0x02,
+				eNTCP2V4 = 0x01,
+				eNTCP2V6 = 0x02,
 				eSSUV4 = 0x04,
 				eSSUV6 = 0x08,
-				eNTCP2V4 = 0x10,
-				eNTCP2V6 = 0x20
+				eNTCP2V6Mesh = 0x10	
 			};
 
 			enum Caps
@@ -68,12 +74,18 @@ namespace data
 				eHighBandwidth = 0x02,
 				eExtraBandwidth = 0x04,
 				eReachable = 0x08,
-				eSSUTesting = 0x10,
-				eSSUIntroducer = 0x20,
-				eHidden = 0x40,
-				eUnreachable = 0x80
+				eHidden = 0x10,
+				eUnreachable = 0x20
 			};
 
+			enum AddressCaps
+			{
+				eV4 = 0x01,
+				eV6 = 0x02,
+				eSSUTesting = 0x04,
+				eSSUIntroducer = 0x08
+			};
+		
 			enum TransportStyle
 			{
 				eTransportUnknown = 0,
@@ -104,7 +116,6 @@ namespace data
 				Tag<32> staticKey;
 				Tag<16> iv;
 				bool isPublished = false;
-				bool isNTCP2Only = false;
 			};
 
 			struct Address
@@ -113,14 +124,14 @@ namespace data
 				boost::asio::ip::address host;
 				int port;
 				uint64_t date;
-				uint8_t cost;
+				uint8_t cost, caps;
 				std::unique_ptr<SSUExt> ssu; // not null for SSU
 				std::unique_ptr<NTCP2Ext> ntcp2; // not null for NTCP2
 
 				bool IsCompatible (const boost::asio::ip::address& other) const
 				{
-					return (host.is_v4 () && other.is_v4 ()) ||
-						(host.is_v6 () && other.is_v6 ());
+					return (IsV4 () && other.is_v4 ()) ||
+						(IsV6 () && other.is_v6 ());
 				}
 
 				bool operator==(const Address& other) const
@@ -136,7 +147,13 @@ namespace data
 
 				bool IsNTCP2 () const { return (bool)ntcp2; };
 				bool IsPublishedNTCP2 () const { return IsNTCP2 () && ntcp2->isPublished; };
-				bool IsNTCP2Only () const { return ntcp2 && ntcp2->isNTCP2Only; };
+				bool IsReachableSSU () const { return (bool)ssu && (!host.is_unspecified () || !ssu->introducers.empty ()); };
+				
+				bool IsIntroducer () const { return caps & eSSUIntroducer; };
+				bool IsPeerTesting () const { return caps & eSSUTesting; };
+
+				bool IsV4 () const { return (caps & AddressCaps::eV4) || host.is_v4 (); };
+				bool IsV6 () const { return (caps & AddressCaps::eV6) || host.is_v6 (); };
 			};
 			typedef std::list<std::shared_ptr<Address> > Addresses;
 
@@ -153,9 +170,12 @@ namespace data
 			uint64_t GetTimestamp () const { return m_Timestamp; };
 			int GetVersion () const { return m_Version; };
 			Addresses& GetAddresses () { return *m_Addresses; }; // should be called for local RI only, otherwise must return shared_ptr
-			std::shared_ptr<const Address> GetNTCP2Address (bool publishedOnly,  bool v4only = true) const;
+			std::shared_ptr<const Address> GetNTCP2AddressWithStaticKey (const uint8_t * key) const;
+			std::shared_ptr<const Address> GetPublishedNTCP2V4Address () const; 
+			std::shared_ptr<const Address> GetPublishedNTCP2V6Address () const; 
 			std::shared_ptr<const Address> GetSSUAddress (bool v4only = true) const;
 			std::shared_ptr<const Address> GetSSUV6Address () const;
+			std::shared_ptr<const Address> GetYggdrasilAddress () const;
 
 			void AddSSUAddress (const char * host, int port, const uint8_t * key, int mtu = 0);
 			void AddNTCP2Address (const uint8_t * staticKey, const uint8_t * iv, const boost::asio::ip::address& host = boost::asio::ip::address(), int port = 0);
@@ -165,26 +185,32 @@ namespace data
 			void DeleteProperty (const std::string& key); // called from RouterContext only
 			std::string GetProperty (const std::string& key) const; // called from RouterContext only
 			void ClearProperties () { m_Properties.clear (); };
+			void SetUnreachableAddressesTransportCaps (uint8_t transports); // bitmask of AddressCaps
 			bool IsFloodfill () const { return m_Caps & Caps::eFloodfill; };
 			bool IsReachable () const { return m_Caps & Caps::eReachable; };
 			bool IsSSU (bool v4only = true) const;
 			bool IsSSUV6 () const;
 			bool IsNTCP2 (bool v4only = true) const;
+			bool IsNTCP2V6 () const;	
 			bool IsV6 () const;
 			bool IsV4 () const;
+			bool IsMesh () const;	
 			void EnableV6 ();
 			void DisableV6 ();
 			void EnableV4 ();
 			void DisableV4 ();
-			bool IsCompatible (const RouterInfo& other) const { return m_SupportedTransports & other.m_SupportedTransports; };
+			void EnableMesh ();
+			void DisableMesh ();	
+			bool IsCompatible (const RouterInfo& other) const { return m_SupportedTransports & other.m_SupportedTransports; };	
+			bool IsReachableFrom (const RouterInfo& other) const;	
 			bool HasValidAddresses () const { return m_SupportedTransports; };
 			bool UsesIntroducer () const;
-			bool IsIntroducer () const { return m_Caps & eSSUIntroducer; };
-			bool IsPeerTesting () const { return m_Caps & eSSUTesting; };
 			bool IsHidden () const { return m_Caps & eHidden; };
 			bool IsHighBandwidth () const { return m_Caps & RouterInfo::eHighBandwidth; };
 			bool IsExtraBandwidth () const { return m_Caps & RouterInfo::eExtraBandwidth; };
 			bool IsEligibleFloodfill () const;
+			bool IsPeerTesting (bool v4only) const;	
+			bool IsIntroducer () const;	
 		
 			uint8_t GetCaps () const { return m_Caps; };
 			void SetCaps (uint8_t caps);
@@ -228,6 +254,7 @@ namespace data
 			size_t ReadString (char* str, size_t len, std::istream& s) const;
 			void WriteString (const std::string& str, std::ostream& s) const;
 			void ExtractCaps (const char * value);
+			uint8_t ExtractAddressCaps (const char * value) const;
 			template<typename Filter>
 			std::shared_ptr<const Address> GetAddress (Filter filter) const;
 			void UpdateCapsProperty ();

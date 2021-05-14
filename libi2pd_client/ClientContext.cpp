@@ -404,9 +404,10 @@ namespace client
 	{
 		std::map<std::string, std::string> params 
 		{
-			{ I2CP_PARAM_INBOUND_TUNNELS_QUANTITY, "2" },
-			{ I2CP_PARAM_OUTBOUND_TUNNELS_QUANTITY, "2" },
-			{ I2CP_PARAM_LEASESET_TYPE, "3" }
+			{ I2CP_PARAM_INBOUND_TUNNELS_QUANTITY, "3" },
+			{ I2CP_PARAM_OUTBOUND_TUNNELS_QUANTITY, "3" },
+			{ I2CP_PARAM_LEASESET_TYPE, "3" },
+			{ I2CP_PARAM_LEASESET_ENCRYPTION_TYPE, "0,4" }
 		};
 		m_SharedLocalDestination = CreateNewLocalDestination (false, i2p::data::SIGNING_KEY_TYPE_EDDSA_SHA512_ED25519,
 			i2p::data::CRYPTO_KEY_TYPE_ELGAMAL, &params); // non-public, EDDSA
@@ -690,7 +691,7 @@ namespace client
 					i2p::data::SigningKeyType sigType = section.second.get (I2P_SERVER_TUNNEL_SIGNATURE_TYPE, i2p::data::SIGNING_KEY_TYPE_EDDSA_SHA512_ED25519);
 					i2p::data::CryptoKeyType cryptoType = section.second.get (I2P_CLIENT_TUNNEL_CRYPTO_TYPE, i2p::data::CRYPTO_KEY_TYPE_ELGAMAL);
 
-					std::string address = section.second.get<std::string> (I2P_SERVER_TUNNEL_ADDRESS, "127.0.0.1");
+					std::string address = section.second.get<std::string> (I2P_SERVER_TUNNEL_ADDRESS, "");
 					bool isUniqueLocal = section.second.get(I2P_SERVER_TUNNEL_ENABLE_UNIQUE_LOCAL, true);
 
 					// I2CP
@@ -717,6 +718,7 @@ namespace client
 					{
 						// udp server tunnel
 						// TODO: hostnames
+						if (address.empty ()) address = "127.0.0.1";
 						auto localAddress = boost::asio::ip::address::from_string(address);
 						boost::asio::ip::udp::endpoint endpoint(boost::asio::ip::address::from_string(host), port);
 						auto serverTunnel = std::make_shared<I2PUDPServerTunnel>(name, localDestination, localAddress, endpoint, port, gzip);
@@ -749,12 +751,13 @@ namespace client
 					else // regular server tunnel by default
 						serverTunnel = std::make_shared<I2PServerTunnel> (name, host, port, localDestination, inPort, gzip);
 
+					if (!address.empty ())
+						serverTunnel->SetLocalAddress (address);
 					if(!isUniqueLocal)
 					{
 						LogPrint(eLogInfo, "Clients: disabling loopback address mapping");
 						serverTunnel->SetUniqueLocal(isUniqueLocal);
 					}
-
 					if (accessList.length () > 0)
 					{
 						std::set<i2p::data::IdentHash> idents;

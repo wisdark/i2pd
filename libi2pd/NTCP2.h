@@ -11,7 +11,6 @@
 
 #include <inttypes.h>
 #include <memory>
-#include <thread>
 #include <list>
 #include <map>
 #include <array>
@@ -35,6 +34,8 @@ namespace transport
 	const int NTCP2_ESTABLISH_TIMEOUT = 10; // 10 seconds
 	const int NTCP2_TERMINATION_TIMEOUT = 120; // 2 minutes
 	const int NTCP2_TERMINATION_CHECK_TIMEOUT = 30; // 30 seconds
+	const int NTCP2_ROUTERINFO_RESEND_INTERVAL = 25*60; // 25 minuntes in seconds
+	const int NTCP2_ROUTERINFO_RESEND_INTERVAL_THRESHOLD = 25*60; // 25 minuntes
 
 	const int NTCP2_CLOCK_SKEW = 60; // in seconds
 	const int NTCP2_MAX_OUTGOING_QUEUE_SIZE = 500; // how many messages we can queue up
@@ -124,7 +125,8 @@ namespace transport
 	{
 		public:
 
-			NTCP2Session (NTCP2Server& server, std::shared_ptr<const i2p::data::RouterInfo> in_RemoteRouter = nullptr);
+			NTCP2Session (NTCP2Server& server, std::shared_ptr<const i2p::data::RouterInfo> in_RemoteRouter = nullptr,
+				std::shared_ptr<const i2p::data::RouterInfo::Address> addr = nullptr);
 			~NTCP2Session ();
 			void Terminate ();
 			void TerminateByTimeout ();
@@ -132,6 +134,8 @@ namespace transport
 			void Close () { m_Socket.close (); }; // for accept
 
 			boost::asio::ip::tcp::socket& GetSocket () { return m_Socket; };
+			const boost::asio::ip::tcp::endpoint& GetRemoteEndpoint () { return m_RemoteEndpoint; };
+			void SetRemoteEndpoint (const boost::asio::ip::tcp::endpoint& ep) { m_RemoteEndpoint = ep; };
 
 			bool IsEstablished () const { return m_IsEstablished; };
 			bool IsTerminated () const { return m_IsTerminated; };
@@ -187,6 +191,7 @@ namespace transport
 
 			NTCP2Server& m_Server;
 			boost::asio::ip::tcp::socket m_Socket;
+			boost::asio::ip::tcp::endpoint m_RemoteEndpoint;
 			bool m_IsEstablished, m_IsTerminated;
 
 			std::unique_ptr<NTCP2Establisher> m_Establisher;
@@ -212,18 +217,12 @@ namespace transport
 
 			bool m_IsSending;
 			std::list<std::shared_ptr<I2NPMessage> > m_SendQueue;
+			uint64_t m_NextRouterInfoResendTime; // seconds since epoch
 	};
 
 	class NTCP2Server: private i2p::util::RunnableServiceWithWork
 	{
 		public:
-
-			enum RemoteAddressType
-			{
-				eIP4Address,
-				eIP6Address,
-				eHostname
-			};
 
 			enum ProxyType
 			{
@@ -243,23 +242,23 @@ namespace transport
 			void RemoveNTCP2Session (std::shared_ptr<NTCP2Session> session);
 			std::shared_ptr<NTCP2Session> FindNTCP2Session (const i2p::data::IdentHash& ident);
 
-			void ConnectWithProxy (const std::string& addr, uint16_t port, RemoteAddressType addrtype, std::shared_ptr<NTCP2Session> conn);
-			void Connect(const boost::asio::ip::address & address, uint16_t port, std::shared_ptr<NTCP2Session> conn);
-
-			void AfterSocksHandshake(std::shared_ptr<NTCP2Session> conn, std::shared_ptr<boost::asio::deadline_timer> timer, const std::string & host, uint16_t port, RemoteAddressType addrtype);
-
+			void ConnectWithProxy (std::shared_ptr<NTCP2Session> conn);
+			void Connect(std::shared_ptr<NTCP2Session> conn);
 
 			bool UsingProxy() const { return m_ProxyType != eNoProxy; };
-			void UseProxy(ProxyType proxy, const std::string & address, uint16_t port);
+			void UseProxy(ProxyType proxy, const std::string& address, uint16_t port, const std::string& user, const std::string& pass);
 
+			void SetLocalAddress (const boost::asio::ip::address& localAddress);
+			
 		private:
 
 			void HandleAccept (std::shared_ptr<NTCP2Session> conn, const boost::system::error_code& error);
 			void HandleAcceptV6 (std::shared_ptr<NTCP2Session> conn, const boost::system::error_code& error);
 
 			void HandleConnect (const boost::system::error_code& ecode, std::shared_ptr<NTCP2Session> conn, std::shared_ptr<boost::asio::deadline_timer> timer);
-			void HandleProxyConnect(const boost::system::error_code& ecode, std::shared_ptr<NTCP2Session> conn, std::shared_ptr<boost::asio::deadline_timer> timer, const std::string & host, uint16_t port, RemoteAddressType adddrtype);
-
+			void HandleProxyConnect(const boost::system::error_code& ecode, std::shared_ptr<NTCP2Session> conn, std::shared_ptr<boost::asio::deadline_timer> timer);
+			void AfterSocksHandshake(std::shared_ptr<NTCP2Session> conn, std::shared_ptr<boost::asio::deadline_timer> timer);
+			
 			// timer
 			void ScheduleTermination ();
 			void HandleTerminationTimer (const boost::system::error_code& ecode);
@@ -272,11 +271,12 @@ namespace transport
 			std::list<std::shared_ptr<NTCP2Session> > m_PendingIncomingSessions;
 
 			ProxyType m_ProxyType;
-			std::string m_ProxyAddress;
+			std::string m_ProxyAddress, m_ProxyAuthorization;
 			uint16_t m_ProxyPort;
 			boost::asio::ip::tcp::resolver m_Resolver;
 			std::unique_ptr<boost::asio::ip::tcp::endpoint> m_ProxyEndpoint;
-
+			std::shared_ptr<boost::asio::ip::tcp::endpoint> m_Address4, m_Address6, m_YggdrasilAddress;
+			
 		public:
 
 			// for HTTP/I2PControl

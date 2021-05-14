@@ -1,6 +1,70 @@
 # for this file format description,
 # see https://github.com/olivierlacan/keep-a-changelog
 
+## [2.37.0] - 2021-03-15
+### Added
+- Address registration line for reg.i2p and stats.i2p through the web console
+- "4" and "6" caps for addresses without published IP address
+- Mesh and Proxy network statuses
+- Symmetric NAT network status error
+- Bind server tunnel connection to specified address
+- lookuplocal BOB extended command
+- address4 and address6 parameters to bind outgoing connections to 
+- Rekey of low-bandwidth routers to ECIES
+- Popup notification windows when unable to parse config for Windows
+### Changed
+- Floodfills with "U" cap are not ignored anymore
+- Check transports reachability between tunnel peers and between router and floodfill 
+- NTCP2 and reseed HTTP proxy support authorization now
+- Show actual IP addresses for proxy connections
+- Publish and handle SSU addreses without host
+- Outbound tunnel endpoint must be ipv4 compatible
+- Logging optimization
+- Removed Windows service
+### Fixed
+- Incoming SSU session terminates after 5 seconds
+- Outgoing NTCP2 ipv4 session even if ipv4 is disabled
+- No incoming Yggdrasil connection if connected through NTCP2 proxy
+- Race condition between tunnel build and floodfill requests decryption for ECIES routers
+- Numeric bandwidth limitation
+- Yggdrasil for Android
+
+## [2.36.0] - 2021-02-15
+### Added
+- Encrypted lookup and publications to ECIES-x25519 floodfiils
+- Yggdrasil transports and reseeds
+- Dump addressbook in hosts.txt format
+- Request RouterInfo through exploratory tunnels if direct connection to fllodfill is not possible
+- Threads naming
+- Check if public x25519 key is valid 
+- ECIES-X25519-AEAD-Ratchet for shared local destination
+- LeaseSet creation timeout for I2CP session
+- Resend RouterInfo after some interval for longer NTCP2 sessions
+- Select reachable router of inbound tunnel gateway
+- Reseed if no compatible routers in netdb 
+- Refresh on swipe in Android webconsole
+### Changed
+- reg.i2p for default addressbook instead inr.i2p
+- ECIES-x25519 (crypto type 4) for new routers
+- Try to connect to all compatible addresses from peer's RouterInfo
+- Replace LeaseSet completely if store type changes 
+- Try ECIES-X25519-AEAD-Ratchet tag before ElGamal
+- Don't detach ECIES-X25519-AEAD-Ratchet session from destination immediately
+- Viewport and styles on error in HTTP proxy
+- Don't create notification when Windows taskbar restarted 
+- Cumulative SSU ACK bitfields
+- limit tunnel length to 8 hops
+- Limit tunnels quantity to 16
+### Fixed
+- Handling chunked HTTP response in addressbook
+- Missing ECIES-X25519-AEAD-Ratchet tags for multiple streams with the same destination
+- Correct NAME for NAMING REPLY in SAM
+- SSU crash on termination
+- Offline signature length for stream close packet
+- Don't send updated LeaseSet through a terminated session
+- Decryption of follow-on ECIES-X25519-AEAD-Ratchet NSR messages
+- Non-confirmed LeaseSet is resent too late for ECIES-X25519-AEAD-Ratchet session
+
 ## [2.35.0] - 2020-11-30
 ### Added
 - ECIES-x25519 routers
