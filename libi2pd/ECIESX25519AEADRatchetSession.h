@@ -88,7 +88,8 @@ namespace garlic
 			bool IsNS () const { return m_IsNS; };
 			std::shared_ptr<ECIESX25519AEADRatchetSession> GetSession () { return m_Session; };
 			void SetTrimBehind (int index) { if (index > m_TrimBehindIndex) m_TrimBehindIndex = index; }; 
-
+			int GetTrimBehind () const { return m_TrimBehindIndex; };
+			
 			void Expire ();
 			bool IsExpired (uint64_t ts) const;			
 			
@@ -103,11 +104,11 @@ namespace garlic
 			uint64_t m_ExpirationTimestamp = 0;
 	};	
 
-	class DatabaseLookupTagSet: public ReceiveRatchetTagSet
+	class SymmetricKeyTagSet: public ReceiveRatchetTagSet
 	{
 		public:
 
-			DatabaseLookupTagSet (GarlicDestination * destination, const uint8_t * key);
+			SymmetricKeyTagSet (GarlicDestination * destination, const uint8_t * key);
 
 			bool IsIndexExpired (int index) const { return false; };
 			bool HandleNextMessage (uint8_t * buf, size_t len, int index);
@@ -160,7 +161,7 @@ namespace garlic
 
 		public:
 
-			ECIESX25519AEADRatchetSession (GarlicDestination * owner, bool attachLeaseSet);
+			ECIESX25519AEADRatchetSession (GarlicDestination * owner, bool attachLeaseSetNS);
 			~ECIESX25519AEADRatchetSession ();
 
 			bool HandleNextMessage (uint8_t * buf, size_t len, std::shared_ptr<ReceiveRatchetTagSet> receiveTagset, int index = 0);
@@ -248,6 +249,11 @@ namespace garlic
 
 			RouterIncomingRatchetSession (const i2p::crypto::NoiseSymmetricState& initState);
 			bool HandleNextMessage (const uint8_t * buf, size_t len);
+			i2p::crypto::NoiseSymmetricState& GetCurrentNoiseState () { return m_CurrentNoiseState; };
+			
+		private:
+
+			i2p::crypto::NoiseSymmetricState m_CurrentNoiseState;
 	};	
 	
 	std::shared_ptr<I2NPMessage> WrapECIESX25519AEADRatchetMessage (std::shared_ptr<const I2NPMessage> msg, const uint8_t * key, uint64_t tag);

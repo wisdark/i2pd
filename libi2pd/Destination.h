@@ -61,14 +61,15 @@ namespace client
 	const char I2CP_PARAM_RATCHET_OUTBOUND_TAGS[] = "crypto.ratchet.outboundTags"; // not used yet
 	const char I2CP_PARAM_INBOUND_NICKNAME[] = "inbound.nickname";
 	const char I2CP_PARAM_OUTBOUND_NICKNAME[] = "outbound.nickname";
+	const char I2CP_PARAM_DONT_PUBLISH_LEASESET[] = "i2cp.dontPublishLeaseSet";
 	const char I2CP_PARAM_LEASESET_TYPE[] = "i2cp.leaseSetType";
-	const int DEFAULT_LEASESET_TYPE = 1;
+	const int DEFAULT_LEASESET_TYPE = 3;
 	const char I2CP_PARAM_LEASESET_ENCRYPTION_TYPE[] = "i2cp.leaseSetEncType";
 	const char I2CP_PARAM_LEASESET_PRIV_KEY[] = "i2cp.leaseSetPrivKey"; // PSK decryption key, base64
 	const char I2CP_PARAM_LEASESET_AUTH_TYPE[] = "i2cp.leaseSetAuthType";
 	const char I2CP_PARAM_LEASESET_CLIENT_DH[] = "i2cp.leaseSetClient.dh"; // group of i2cp.leaseSetClient.dh.nnn
-	const char I2CP_PARAM_LEASESET_CLIENT_PSK[] = "i2cp.leaseSetClient.psk"; // group of i2cp.leaseSetClient.psk.nnn
-
+	const char I2CP_PARAM_LEASESET_CLIENT_PSK[] = "i2cp.leaseSetClient.psk"; // group of i2cp.leaseSetClient.psk.nnn 
+	
 	// latency
 	const char I2CP_PARAM_MIN_TUNNEL_LATENCY[] = "latency.min";
 	const int DEFAULT_MIN_TUNNEL_LATENCY = 0;
@@ -152,7 +153,7 @@ namespace client
 			virtual void CleanupDestination () {}; // additional clean up in derived classes
 			// I2CP
 			virtual void HandleDataMessage (const uint8_t * buf, size_t len) = 0;
-			virtual void CreateNewLeaseSet (std::vector<std::shared_ptr<i2p::tunnel::InboundTunnel> > tunnels) = 0;
+			virtual void CreateNewLeaseSet (const std::vector<std::shared_ptr<i2p::tunnel::InboundTunnel> >& tunnels) = 0;
 
 		private:
 
@@ -236,6 +237,7 @@ namespace client
 			// streaming
 			std::shared_ptr<i2p::stream::StreamingDestination> CreateStreamingDestination (int port, bool gzip = true); // additional
 			std::shared_ptr<i2p::stream::StreamingDestination> GetStreamingDestination (int port = 0) const;
+			std::shared_ptr<i2p::stream::StreamingDestination> RemoveStreamingDestination (int port);
 			// following methods operate with default streaming destination
 			void CreateStream (StreamRequestComplete streamRequestComplete, const i2p::data::IdentHash& dest, int port = 0);
 			void CreateStream (StreamRequestComplete streamRequestComplete, std::shared_ptr<const i2p::data::BlindedPublicKey> dest, int port = 0);
@@ -262,7 +264,7 @@ namespace client
 			void CleanupDestination ();
 			// I2CP
 			void HandleDataMessage (const uint8_t * buf, size_t len);
-			void CreateNewLeaseSet (std::vector<std::shared_ptr<i2p::tunnel::InboundTunnel> > tunnels);
+			void CreateNewLeaseSet (const std::vector<std::shared_ptr<i2p::tunnel::InboundTunnel> >& tunnels);
 
 		private:
 

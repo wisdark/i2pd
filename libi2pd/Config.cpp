@@ -93,6 +93,7 @@ namespace config {
 			("http.strictheaders", value<bool>()->default_value(true),          "Enable strict host checking on WebUI")
 			("http.hostname", value<std::string>()->default_value("localhost"), "Expected hostname for WebUI")
 			("http.webroot", value<std::string>()->default_value("/"),          "WebUI root path (default: / )")
+			("http.lang", value<std::string>()->default_value("english"),       "WebUI language (default: english )")
 		;
 
 		options_description httpproxy("HTTP Proxy options");
@@ -113,6 +114,7 @@ namespace config {
 			("httpproxy.addresshelper", value<bool>()->default_value(true),           "Enable or disable addresshelper")
 			("httpproxy.i2cp.leaseSetType", value<std::string>()->default_value("3"), "Local destination's LeaseSet type")
 			("httpproxy.i2cp.leaseSetEncType", value<std::string>()->default_value("0,4"), "Local destination's LeaseSet encryption type")
+			("httpproxy.i2cp.leaseSetPrivKey", value<std::string>()->default_value(""), "LeaseSet private key")
 		;
 
 		options_description socksproxy("SOCKS Proxy options");
@@ -134,6 +136,7 @@ namespace config {
 			("socksproxy.outproxyport", value<uint16_t>()->default_value(9050),        "Upstream outproxy port for SOCKS Proxy")
 			("socksproxy.i2cp.leaseSetType", value<std::string>()->default_value("3"), "Local destination's LeaseSet type")
 			("socksproxy.i2cp.leaseSetEncType", value<std::string>()->default_value("0,4"), "Local destination's LeaseSet encryption type")
+			("socksproxy.i2cp.leaseSetPrivKey", value<std::string>()->default_value(""), "LeaseSet private key")
 		;
 
 		options_description sam("SAM bridge options");
@@ -218,7 +221,7 @@ namespace config {
 			("addressbook.defaulturl", value<std::string>()->default_value(
 				"http://shx5vqsw7usdaunyzr2qmes2fq37oumybpudrd4jjj4e4vk4uusa.b32.i2p/hosts.txt"
 			),                                                                     "AddressBook subscription URL for initial setup")
-			("addressbook.subscriptions", value<std::string>()->default_value(""), "AddressBook subscriptions URLs, separated by comma")
+			("addressbook.subscriptions", value<std::string>()->default_value("http://reg.i2p/hosts.txt"), "AddressBook subscriptions URLs, separated by comma")
 			("addressbook.hostsfile", value<std::string>()->default_value(""),     "File to dump addresses in hosts.txt format");
 
 		options_description trust("Trust options");

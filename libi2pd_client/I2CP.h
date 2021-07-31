@@ -62,7 +62,6 @@ namespace client
 	};
 
 	// params
-	const char I2CP_PARAM_DONT_PUBLISH_LEASESET[] = "i2cp.dontPublishLeaseSet";
 	const char I2CP_PARAM_MESSAGE_RELIABILITY[] = "i2cp.messageReliability";
 
 	class I2CPSession;
@@ -93,7 +92,7 @@ namespace client
 
 			// I2CP
 			void HandleDataMessage (const uint8_t * buf, size_t len);
-			void CreateNewLeaseSet (std::vector<std::shared_ptr<i2p::tunnel::InboundTunnel> > tunnels);
+			void CreateNewLeaseSet (const std::vector<std::shared_ptr<i2p::tunnel::InboundTunnel> >& tunnels);
 
 		private:
 
@@ -101,6 +100,8 @@ namespace client
 			{ return std::static_pointer_cast<I2CPDestination>(shared_from_this ()); }
 			bool SendMsg (std::shared_ptr<I2NPMessage> msg, std::shared_ptr<const i2p::data::LeaseSet> remote);
 
+			void PostCreateNewLeaseSet (std::vector<std::shared_ptr<i2p::tunnel::InboundTunnel> > tunnels);
+			
 		private:
 
 			std::shared_ptr<I2CPSession> m_Owner;
