@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2020, The PurpleI2P Project
+* Copyright (c) 2013-2021, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -72,29 +72,30 @@ namespace client
 	bool MatchedTunnelDestination::SelectPeers(i2p::tunnel::Path & path, int hops, bool inbound)
 	{
 		auto pool = GetTunnelPool();
-		if(!i2p::tunnel::StandardSelectPeers(path, hops, inbound, std::bind(&i2p::tunnel::TunnelPool::SelectNextHop, pool, std::placeholders::_1)))
+		if(!i2p::tunnel::StandardSelectPeers(path, hops, inbound, 
+			std::bind(&i2p::tunnel::TunnelPool::SelectNextHop, pool, std::placeholders::_1, std::placeholders::_2)))
 			return false;
 		// more here for outbound tunnels
 		if(!inbound && m_RemoteLeaseSet)
 		{
 			if(m_RemoteLeaseSet->IsExpired())
-			{
 				ResolveCurrentLeaseSet();
-			}
 			if(m_RemoteLeaseSet && !m_RemoteLeaseSet->IsExpired())
 			{
 				// remote lease set is good
 				auto leases = m_RemoteLeaseSet->GetNonExpiredLeases();
 				// pick lease
 				std::shared_ptr<i2p::data::RouterInfo> obep;
-				while(!obep && leases.size() > 0) {
+				while(!obep && leases.size() > 0) 
+				{
 					auto idx = rand() % leases.size();
 					auto lease = leases[idx];
 					obep = i2p::data::netdb.FindRouter(lease->tunnelGateway);
 					leases.erase(leases.begin()+idx);
 				}
-				if(obep) {
-					path.push_back(obep->GetRouterIdentity());
+				if(obep) 
+				{
+					path.Add (obep);
 					LogPrint(eLogDebug, "Destination: found OBEP matching IBGW");
 				} else
 					LogPrint(eLogWarning, "Destination: could not find proper IBGW for matched outbound tunnel");

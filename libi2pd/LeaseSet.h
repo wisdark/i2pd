@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2020, The PurpleI2P Project
+* Copyright (c) 2013-2021, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -93,7 +93,7 @@ namespace data
 
 			// implements RoutingDestination
 			std::shared_ptr<const IdentityEx> GetIdentity () const { return m_Identity; };
-			void Encrypt (const uint8_t * data, uint8_t * encrypted, BN_CTX * ctx) const;
+			void Encrypt (const uint8_t * data, uint8_t * encrypted) const;
 			bool IsDestination () const { return true; };
 
 		protected:
@@ -156,7 +156,7 @@ namespace data
 			bool IsNewer (const uint8_t * buf, size_t len) const;
 
 			// implements RoutingDestination
-			void Encrypt (const uint8_t * data, uint8_t * encrypted, BN_CTX * ctx) const;
+			void Encrypt (const uint8_t * data, uint8_t * encrypted) const;
 			CryptoKeyType GetEncryptionType () const { return m_EncryptionType; };
 
 		private:
@@ -251,7 +251,7 @@ namespace data
 
 			LocalLeaseSet2 (uint8_t storeType, const i2p::data::PrivateKeys& keys,
 				const KeySections& encryptionKeys,
-				std::vector<std::shared_ptr<i2p::tunnel::InboundTunnel> > tunnels,
+				const std::vector<std::shared_ptr<i2p::tunnel::InboundTunnel> >& tunnels,
 				bool isPublic, bool isPublishedEncrypted = false);
 
 			LocalLeaseSet2 (uint8_t storeType, std::shared_ptr<const IdentityEx> identity, const uint8_t * buf, size_t len); // from I2CP

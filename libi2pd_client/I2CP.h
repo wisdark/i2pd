@@ -17,6 +17,7 @@
 #include <boost/asio.hpp>
 #include "util.h"
 #include "Destination.h"
+#include "Streaming.h"
 
 namespace i2p
 {
@@ -25,7 +26,9 @@ namespace client
 	const uint8_t I2CP_PROTOCOL_BYTE = 0x2A;
 	const size_t I2CP_SESSION_BUFFER_SIZE = 4096;
 	const size_t I2CP_MAX_MESSAGE_LENGTH = 65535;
-
+	const size_t I2CP_MAX_SEND_QUEUE_SIZE = 1024*1024; // in bytes, 1M
+	const int I2CP_LEASESET_CREATION_TIMEOUT = 10; // in seconds	
+	
 	const size_t I2CP_HEADER_LENGTH_OFFSET = 0;
 	const size_t I2CP_HEADER_TYPE_OFFSET = I2CP_HEADER_LENGTH_OFFSET + 4;
 	const size_t I2CP_HEADER_SIZE = I2CP_HEADER_TYPE_OFFSET + 1;
@@ -59,20 +62,19 @@ namespace client
 	};
 
 	// params
-	const char I2CP_PARAM_DONT_PUBLISH_LEASESET[] = "i2cp.dontPublishLeaseSet";
 	const char I2CP_PARAM_MESSAGE_RELIABILITY[] = "i2cp.messageReliability";
 
 	class I2CPSession;
-	class I2CPDestination: private i2p::util::RunnableService, public LeaseSetDestination
+	class I2CPDestination: public LeaseSetDestination
 	{
 		public:
 
-			I2CPDestination (std::shared_ptr<I2CPSession> owner, std::shared_ptr<const i2p::data::IdentityEx> identity, bool isPublic, const std::map<std::string, std::string>& params);
-			~I2CPDestination ();
+			I2CPDestination (boost::asio::io_service& service, std::shared_ptr<I2CPSession> owner, 
+				std::shared_ptr<const i2p::data::IdentityEx> identity, bool isPublic, const std::map<std::string, std::string>& params);
+			~I2CPDestination () {};
 
-			void Start ();
 			void Stop ();
-
+			
 			void SetEncryptionPrivateKey (const uint8_t * key);
 			void SetEncryptionType (i2p::data::CryptoKeyType keyType) { m_EncryptionKeyType = keyType; };
 			void SetECIESx25519EncryptionPrivateKey (const uint8_t * key);
@@ -81,7 +83,7 @@ namespace client
 			void SendMsgTo (const uint8_t * payload, size_t len, const i2p::data::IdentHash& ident, uint32_t nonce); // called from I2CPSession
 
 			// implements LocalDestination
-			bool Decrypt (const uint8_t * encrypted, uint8_t * data, BN_CTX * ctx, i2p::data::CryptoKeyType preferredCrypto) const;
+			bool Decrypt (const uint8_t * encrypted, uint8_t * data, i2p::data::CryptoKeyType preferredCrypto) const;
 			bool SupportsEncryptionType (i2p::data::CryptoKeyType keyType) const;			
 			const uint8_t * GetEncryptionPublicKey (i2p::data::CryptoKeyType keyType) const; // for 4 only
 			std::shared_ptr<const i2p::data::IdentityEx> GetIdentity () const { return m_Identity; };
@@ -90,7 +92,7 @@ namespace client
 
 			// I2CP
 			void HandleDataMessage (const uint8_t * buf, size_t len);
-			void CreateNewLeaseSet (std::vector<std::shared_ptr<i2p::tunnel::InboundTunnel> > tunnels);
+			void CreateNewLeaseSet (const std::vector<std::shared_ptr<i2p::tunnel::InboundTunnel> >& tunnels);
 
 		private:
 
@@ -98,6 +100,8 @@ namespace client
 			{ return std::static_pointer_cast<I2CPDestination>(shared_from_this ()); }
 			bool SendMsg (std::shared_ptr<I2NPMessage> msg, std::shared_ptr<const i2p::data::LeaseSet> remote);
 
+			void PostCreateNewLeaseSet (std::vector<std::shared_ptr<i2p::tunnel::InboundTunnel> > tunnels);
+			
 		private:
 
 			std::shared_ptr<I2CPSession> m_Owner;
@@ -107,8 +111,22 @@ namespace client
 			std::shared_ptr<i2p::crypto::ECIESX25519AEADRatchetDecryptor> m_ECIESx25519Decryptor;
 			uint8_t m_ECIESx25519PrivateKey[32];
 			uint64_t m_LeaseSetExpirationTime;
+			bool m_IsCreatingLeaseSet;
+			boost::asio::deadline_timer m_LeaseSetCreationTimer;
 	};
 
+	class RunnableI2CPDestination: private i2p::util::RunnableService, public I2CPDestination 
+	{
+		public:
+
+			RunnableI2CPDestination (std::shared_ptr<I2CPSession> owner, std::shared_ptr<const i2p::data::IdentityEx> identity, 
+				bool isPublic, const std::map<std::string, std::string>& params);	
+			~RunnableI2CPDestination ();
+
+			void Start ();
+			void Stop ();
+	};	
+	
 	class I2CPServer;
 	class I2CPSession: public std::enable_shared_from_this<I2CPSession>
 	{
@@ -156,12 +174,12 @@ namespace client
 			void HandleReceivedPayload (const boost::system::error_code& ecode, std::size_t bytes_transferred);
 			void HandleMessage ();
 			void Terminate ();
-
-			void HandleI2CPMessageSent (const boost::system::error_code& ecode, std::size_t bytes_transferred, const uint8_t * buf);
+			
+			void HandleI2CPMessageSent (const boost::system::error_code& ecode, std::size_t bytes_transferred);
+			
 			std::string ExtractString (const uint8_t * buf, size_t len);
 			size_t PutString (uint8_t * buf, size_t len, const std::string& str);
 			void ExtractMapping (const uint8_t * buf, size_t len, std::map<std::string, std::string>& mapping);
-
 			void SendSessionStatusMessage (uint8_t status);
 			void SendHostReplyMessage (uint32_t requestID, std::shared_ptr<const i2p::data::IdentityEx> identity);
 
@@ -169,27 +187,33 @@ namespace client
 
 			I2CPServer& m_Owner;
 			std::shared_ptr<proto::socket> m_Socket;
-			uint8_t m_Header[I2CP_HEADER_SIZE], * m_Payload;
+			uint8_t m_Header[I2CP_HEADER_SIZE], m_Payload[I2CP_MAX_MESSAGE_LENGTH];
 			size_t m_PayloadLen;
 
 			std::shared_ptr<I2CPDestination> m_Destination;
 			uint16_t m_SessionID;
 			uint32_t m_MessageID;
 			bool m_IsSendAccepted;
+
+			// to client
+			bool m_IsSending;
+			uint8_t m_SendBuffer[I2CP_MAX_MESSAGE_LENGTH];
+			i2p::stream::SendBufferQueue m_SendQueue; 
 	};
 	typedef void (I2CPSession::*I2CPMessageHandler)(const uint8_t * buf, size_t len);
 
-	class I2CPServer
+	class I2CPServer: private i2p::util::RunnableService
 	{
 		public:
 
-			I2CPServer (const std::string& interface, int port);
+			I2CPServer (const std::string& interface, int port, bool isSingleThread);
 			~I2CPServer ();
 
 			void Start ();
 			void Stop ();
-			boost::asio::io_service& GetService () { return m_Service; };
-
+			boost::asio::io_service& GetService () { return GetIOService (); };
+			bool IsSingleThread () const { return m_IsSingleThread; };
+			
 			bool InsertSession (std::shared_ptr<I2CPSession> session);
 			void RemoveSession (uint16_t sessionID);
 
@@ -203,12 +227,10 @@ namespace client
 
 		private:
 
+			bool m_IsSingleThread;
 			I2CPMessageHandler m_MessagesHandlers[256];
 			std::map<uint16_t, std::shared_ptr<I2CPSession> > m_Sessions;
 
-			bool m_IsRunning;
-			std::thread * m_Thread;
-			boost::asio::io_service m_Service;
 			I2CPSession::proto::acceptor m_Acceptor;
 
 		public:

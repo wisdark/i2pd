@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2020, The PurpleI2P Project
+* Copyright (c) 2013-2021, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -119,7 +119,7 @@ namespace crypto
 
 		~CryptoConstants ()
 		{
-			BN_free (elgp);  BN_free (elgg); BN_free (dsap); BN_free (dsaq); BN_free (dsag); BN_free (rsae);
+			BN_free (elgp); BN_free (elgg); BN_free (dsap); BN_free (dsaq); BN_free (dsag); BN_free (rsae);
 		}
 	};
 
@@ -351,11 +351,13 @@ namespace crypto
 #endif
 	}
 
-	void X25519Keys::Agree (const uint8_t * pub, uint8_t * shared)
+	bool X25519Keys::Agree (const uint8_t * pub, uint8_t * shared)
 	{
+		if (!pub || (pub[31] & 0x80)) return false; // not x25519 key
 #if OPENSSL_X25519
 		EVP_PKEY_derive_init (m_Ctx);
 		auto pkey = EVP_PKEY_new_raw_public_key (EVP_PKEY_X25519, NULL, pub, 32);
+		if (!pkey) return false;
 		EVP_PKEY_derive_set_peer (m_Ctx, pkey);
 		size_t len = 32;
 		EVP_PKEY_derive (m_Ctx, shared, &len);
@@ -363,6 +365,7 @@ namespace crypto
 #else
 		GetEd25519 ()->ScalarMul (pub, m_PrivateKey, shared, m_Ctx);
 #endif
+		return true;
 	}
 
 	void X25519Keys::GetPrivateKey (uint8_t * priv) const
@@ -395,8 +398,9 @@ namespace crypto
 	}
 
 // ElGamal
-	void ElGamalEncrypt (const uint8_t * key, const uint8_t * data, uint8_t * encrypted, BN_CTX * ctx, bool zeroPadding)
+	void ElGamalEncrypt (const uint8_t * key, const uint8_t * data, uint8_t * encrypted)
 	{
+		BN_CTX * ctx = BN_CTX_new ();
 		BN_CTX_start (ctx);
 		// everything, but a, because a might come from table
 		BIGNUM * k = BN_CTX_get (ctx);
@@ -432,37 +436,32 @@ namespace crypto
 		BN_bin2bn (m, 255, b);
 		BN_mod_mul (b, b1, b, elgp, ctx);
 		// copy a and b
-		if (zeroPadding)
-		{
-			encrypted[0] = 0;
-			bn2buf (a, encrypted + 1, 256);
-			encrypted[257] = 0;
-			bn2buf (b, encrypted + 258, 256);
-		}
-		else
-		{
-			bn2buf (a, encrypted, 256);
-			bn2buf (b, encrypted + 256, 256);
-		}
+		encrypted[0] = 0;
+		bn2buf (a, encrypted + 1, 256);
+		encrypted[257] = 0;
+		bn2buf (b, encrypted + 258, 256);
+		
 		BN_free (a);
 		BN_CTX_end (ctx);
+		BN_CTX_free (ctx);
 	}
 
-	bool ElGamalDecrypt (const uint8_t * key, const uint8_t * encrypted,
-		uint8_t * data, BN_CTX * ctx, bool zeroPadding)
+	bool ElGamalDecrypt (const uint8_t * key, const uint8_t * encrypted, uint8_t * data)
 	{
+		BN_CTX * ctx = BN_CTX_new ();
 		BN_CTX_start (ctx);
 		BIGNUM * x = BN_CTX_get (ctx), * a = BN_CTX_get (ctx), * b = BN_CTX_get (ctx);
 		BN_bin2bn (key, 256, x);
 		BN_sub (x, elgp, x); BN_sub_word (x, 1); // x = elgp - x- 1
-		BN_bin2bn (zeroPadding ? encrypted + 1 : encrypted, 256, a);
-		BN_bin2bn (zeroPadding ? encrypted + 258 : encrypted + 256, 256, b);
+		BN_bin2bn (encrypted + 1, 256, a);
+		BN_bin2bn (encrypted + 258, 256, b);
 		// m = b*(a^x mod p) mod p
 		BN_mod_exp (x, a, x, elgp, ctx);
 		BN_mod_mul (b, b, x, elgp, ctx);
 		uint8_t m[255];
 		bn2buf (b, m, 255);
 		BN_CTX_end (ctx);
+		BN_CTX_free (ctx);
 		uint8_t hash[32];
 		SHA256 (m + 33, 222, hash);
 		if (memcmp (m + 1, hash, 32))
@@ -496,8 +495,9 @@ namespace crypto
 	}
 
 // ECIES
-	void ECIESEncrypt (const EC_GROUP * curve, const EC_POINT * key, const uint8_t * data, uint8_t * encrypted, BN_CTX * ctx, bool zeroPadding)
+	void ECIESEncrypt (const EC_GROUP * curve, const EC_POINT * key, const uint8_t * data, uint8_t * encrypted)
 	{
+		BN_CTX * ctx = BN_CTX_new ();
 		BN_CTX_start (ctx);
 		BIGNUM * q = BN_CTX_get (ctx);
 		EC_GROUP_get_order(curve, q, ctx);
@@ -509,20 +509,11 @@ namespace crypto
 		EC_POINT_mul (curve, p, k, nullptr, nullptr, ctx);
 		BIGNUM * x = BN_CTX_get (ctx), * y = BN_CTX_get (ctx);
 		EC_POINT_get_affine_coordinates_GFp (curve, p, x, y, nullptr);
-		if (zeroPadding)
-		{
-			encrypted[0] = 0;
-			bn2buf (x, encrypted + 1, len);
-			bn2buf (y, encrypted + 1 + len, len);
-			RAND_bytes (encrypted + 1 + 2*len, 256 - 2*len);
-		}
-		else
-		{
-			bn2buf (x, encrypted, len);
-			bn2buf (y, encrypted + len, len);
-			RAND_bytes (encrypted + 2*len, 256 - 2*len);
-		}
-		// ecryption key and iv
+		encrypted[0] = 0;
+		bn2buf (x, encrypted + 1, len);
+		bn2buf (y, encrypted + 1 + len, len);
+		RAND_bytes (encrypted + 1 + 2*len, 256 - 2*len);
+		// encryption key and iv
 		EC_POINT_mul (curve, p, nullptr, key, k, ctx);
 		EC_POINT_get_affine_coordinates_GFp (curve, p, x, y, nullptr);
 		uint8_t keyBuf[64], iv[64], shared[32];
@@ -538,36 +529,25 @@ namespace crypto
 		CBCEncryption encryption;
 		encryption.SetKey (shared);
 		encryption.SetIV (iv);
-		if (zeroPadding)
-		{
-			encrypted[257] = 0;
-			encryption.Encrypt (m, 256, encrypted + 258);
-		}
-		else
-			encryption.Encrypt (m, 256, encrypted + 256);
+		encrypted[257] = 0;
+		encryption.Encrypt (m, 256, encrypted + 258);
 		EC_POINT_free (p);
 		BN_CTX_end (ctx);
+		BN_CTX_free (ctx);
 	}
 
-	bool ECIESDecrypt (const EC_GROUP * curve, const BIGNUM * key, const uint8_t * encrypted, uint8_t * data, BN_CTX * ctx, bool zeroPadding)
+	bool ECIESDecrypt (const EC_GROUP * curve, const BIGNUM * key, const uint8_t * encrypted, uint8_t * data)
 	{
 		bool ret = true;
+		BN_CTX * ctx = BN_CTX_new ();
 		BN_CTX_start (ctx);
 		BIGNUM * q = BN_CTX_get (ctx);
 		EC_GROUP_get_order(curve, q, ctx);
 		int len = BN_num_bytes (q);
 		// point for shared secret
 		BIGNUM * x = BN_CTX_get (ctx), * y = BN_CTX_get (ctx);
-		if (zeroPadding)
-		{
-			BN_bin2bn (encrypted + 1, len, x);
-			BN_bin2bn (encrypted + 1 + len, len, y);
-		}
-		else
-		{
-			BN_bin2bn (encrypted, len, x);
-			BN_bin2bn (encrypted + len, len, y);
-		}
+		BN_bin2bn (encrypted + 1, len, x);
+		BN_bin2bn (encrypted + 1 + len, len, y);
 		auto p = EC_POINT_new (curve);
 		if (EC_POINT_set_affine_coordinates_GFp (curve, p, x, y, nullptr))
 		{
@@ -584,10 +564,7 @@ namespace crypto
 			CBCDecryption decryption;
 			decryption.SetKey (shared);
 			decryption.SetIV (iv);
-			if (zeroPadding)
-				decryption.Decrypt (encrypted + 258, 256, m);
-			else
-				decryption.Decrypt (encrypted + 256, 256, m);
+			decryption.Decrypt (encrypted + 258, 256, m);
 			// verify and copy
 			uint8_t hash[32];
 			SHA256 (m + 33, 222, hash);
@@ -607,6 +584,7 @@ namespace crypto
 
 		EC_POINT_free (p);
 		BN_CTX_end (ctx);
+		BN_CTX_free (ctx);
 		return ret;
 	}
 
@@ -638,7 +616,7 @@ namespace crypto
 	{
 		uint64_t buf[256];
 		uint64_t hash[12]; // 96 bytes
-#ifdef __AVX__
+#if (defined(__x86_64__) || defined(__i386__)) && defined(__AVX__) // not all X86 targets supports AVX (like old Pentium, see #1600)
 		if(i2p::cpu::avx)
 		{
 			__asm__
@@ -657,7 +635,7 @@ namespace crypto
 					:
 					: [key]"m"(*(const uint8_t *)key), [ipad]"m"(*ipads), [opad]"m"(*opads),
 						[buf]"r"(buf), [hash]"r"(hash)
-					: "memory", "%xmm0"	// TODO: change to %ymm0 later
+					: "memory", "%xmm0" // TODO: change to %ymm0 later
 					);
 		}
 		else
@@ -688,7 +666,7 @@ namespace crypto
 		// concatenate with msg
 		memcpy (buf + 8, msg, len);
 		// calculate first hash
-		MD5((uint8_t *)buf, len + 64, (uint8_t *)(hash + 8));  // 16 bytes
+		MD5((uint8_t *)buf, len + 64, (uint8_t *)(hash + 8)); // 16 bytes
 
 		// calculate digest
 		MD5((uint8_t *)hash, 96, digest);
@@ -696,35 +674,28 @@ namespace crypto
 
 // AES
 #ifdef __AES__
-	#ifdef ARM64AES
-	void init_aesenc(void){
-			// TODO: Implementation
-	}
-
-	#endif
-
 	#define KeyExpansion256(round0,round1) \
-		"pshufd	$0xff, %%xmm2, %%xmm2 \n" \
-		"movaps	%%xmm1, %%xmm4 \n" \
-		"pslldq	$4, %%xmm4 \n" \
+		"pshufd $0xff, %%xmm2, %%xmm2 \n" \
+		"movaps %%xmm1, %%xmm4 \n" \
+		"pslldq $4, %%xmm4 \n" \
 		"pxor %%xmm4, %%xmm1 \n" \
-		"pslldq	$4, %%xmm4 \n" \
+		"pslldq $4, %%xmm4 \n" \
 		"pxor %%xmm4, %%xmm1 \n" \
-		"pslldq	$4, %%xmm4 \n" \
+		"pslldq $4, %%xmm4 \n" \
 		"pxor %%xmm4, %%xmm1 \n" \
 		"pxor %%xmm2, %%xmm1 \n" \
-		"movaps	%%xmm1, "#round0"(%[sched]) \n" \
+		"movaps %%xmm1, "#round0"(%[sched]) \n" \
 		"aeskeygenassist $0, %%xmm1, %%xmm4 \n" \
-		"pshufd	$0xaa, %%xmm4, %%xmm2 \n" \
-		"movaps	%%xmm3, %%xmm4 \n" \
-		"pslldq	$4, %%xmm4 \n" \
+		"pshufd $0xaa, %%xmm4, %%xmm2 \n" \
+		"movaps %%xmm3, %%xmm4 \n" \
+		"pslldq $4, %%xmm4 \n" \
 		"pxor %%xmm4, %%xmm3 \n" \
-		"pslldq	$4, %%xmm4 \n" \
+		"pslldq $4, %%xmm4 \n" \
 		"pxor %%xmm4, %%xmm3 \n" \
-		"pslldq	$4, %%xmm4 \n" \
+		"pslldq $4, %%xmm4 \n" \
 		"pxor %%xmm4, %%xmm3 \n" \
 		"pxor %%xmm2, %%xmm3 \n" \
-		"movaps	%%xmm3, "#round1"(%[sched]) \n"
+		"movaps %%xmm3, "#round1"(%[sched]) \n"
 #endif
 
 #ifdef __AES__
@@ -750,16 +721,16 @@ namespace crypto
 			KeyExpansion256(192,208)
 			"aeskeygenassist $64, %%xmm3, %%xmm2 \n"
 			// key expansion final
-			"pshufd	$0xff, %%xmm2, %%xmm2 \n"
-			"movaps	%%xmm1, %%xmm4 \n"
-			"pslldq	$4, %%xmm4 \n"
+			"pshufd $0xff, %%xmm2, %%xmm2 \n"
+			"movaps %%xmm1, %%xmm4 \n"
+			"pslldq $4, %%xmm4 \n"
 			"pxor %%xmm4, %%xmm1 \n"
-			"pslldq	$4, %%xmm4 \n"
+			"pslldq $4, %%xmm4 \n"
 			"pxor %%xmm4, %%xmm1 \n"
-			"pslldq	$4, %%xmm4 \n"
+			"pslldq $4, %%xmm4 \n"
 			"pxor %%xmm4, %%xmm1 \n"
 			"pxor %%xmm2, %%xmm1 \n"
-			"movups	%%xmm1, 224(%[sched]) \n"
+			"movups %%xmm1, 224(%[sched]) \n"
 			: // output
 			: [key]"r"((const uint8_t *)key), [sched]"r"(GetKeySchedule ()) // input
 			: "%xmm1", "%xmm2", "%xmm3", "%xmm4", "memory" // clogged
@@ -794,9 +765,9 @@ namespace crypto
 		{
 			__asm__
 				(
-					"movups	(%[in]), %%xmm0 \n"
+					"movups (%[in]), %%xmm0 \n"
 					EncryptAES256(sched)
-					"movups	%%xmm0, (%[out]) \n"
+					"movups %%xmm0, (%[out]) \n"
 					: : [sched]"r"(GetKeySchedule ()), [in]"r"(in), [out]"r"(out) : "%xmm0", "memory"
 					);
 		}
@@ -833,9 +804,9 @@ namespace crypto
 		{
 			__asm__
 				(
-					"movups	(%[in]), %%xmm0 \n"
+					"movups (%[in]), %%xmm0 \n"
 					DecryptAES256(sched)
-					"movups	%%xmm0, (%[out]) \n"
+					"movups %%xmm0, (%[out]) \n"
 					: : [sched]"r"(GetKeySchedule ()), [in]"r"(in), [out]"r"(out) : "%xmm0", "memory"
 					);
 		}
@@ -848,7 +819,7 @@ namespace crypto
 
 #ifdef __AES__
 	#define CallAESIMC(offset) \
-		"movaps "#offset"(%[shed]), %%xmm0 \n"	\
+		"movaps "#offset"(%[shed]), %%xmm0 \n" \
 		"aesimc %%xmm0, %%xmm0 \n" \
 		"movaps %%xmm0, "#offset"(%[shed]) \n"
 #endif
@@ -873,7 +844,7 @@ namespace crypto
 		if(i2p::cpu::aesni)
 		{
 			ExpandKey (key); // expand encryption key first
-			// then  invert it using aesimc
+			// then invert it using aesimc
 			__asm__
 				(
 					CallAESIMC(16)
@@ -906,18 +877,18 @@ namespace crypto
 		{
 			__asm__
 				(
-					"movups	(%[iv]), %%xmm1 \n"
+					"movups (%[iv]), %%xmm1 \n"
 					"1: \n"
-					"movups	(%[in]), %%xmm0 \n"
+					"movups (%[in]), %%xmm0 \n"
 					"pxor %%xmm1, %%xmm0 \n"
 					EncryptAES256(sched)
-					"movaps	%%xmm0, %%xmm1 \n"
-					"movups	%%xmm0, (%[out]) \n"
+					"movaps %%xmm0, %%xmm1 \n"
+					"movups %%xmm0, (%[out]) \n"
 					"add $16, %[in] \n"
 					"add $16, %[out] \n"
 					"dec %[num] \n"
 					"jnz 1b \n"
-					"movups	%%xmm1, (%[iv]) \n"
+					"movups %%xmm1, (%[iv]) \n"
 					:
 					: [iv]"r"((uint8_t *)m_LastBlock), [sched]"r"(m_ECBEncryption.GetKeySchedule ()),
 						[in]"r"(in), [out]"r"(out), [num]"r"(numBlocks)
@@ -951,12 +922,12 @@ namespace crypto
 		{
 			__asm__
 				(
-					"movups	(%[iv]), %%xmm1 \n"
-					"movups	(%[in]), %%xmm0 \n"
+					"movups (%[iv]), %%xmm1 \n"
+					"movups (%[in]), %%xmm0 \n"
 					"pxor %%xmm1, %%xmm0 \n"
 					EncryptAES256(sched)
-					"movups	%%xmm0, (%[out]) \n"
-					"movups	%%xmm0, (%[iv]) \n"
+					"movups %%xmm0, (%[out]) \n"
+					"movups %%xmm0, (%[iv]) \n"
 					:
 					: [iv]"r"((uint8_t *)m_LastBlock), [sched]"r"(m_ECBEncryption.GetKeySchedule ()),
 						[in]"r"(in), [out]"r"(out)
@@ -975,19 +946,19 @@ namespace crypto
 		{
 			__asm__
 				(
-					"movups	(%[iv]), %%xmm1 \n"
+					"movups (%[iv]), %%xmm1 \n"
 					"1: \n"
-					"movups	(%[in]), %%xmm0 \n"
+					"movups (%[in]), %%xmm0 \n"
 					"movaps %%xmm0, %%xmm2 \n"
 					DecryptAES256(sched)
 					"pxor %%xmm1, %%xmm0 \n"
-					"movups	%%xmm0, (%[out]) \n"
+					"movups %%xmm0, (%[out]) \n"
 					"movaps %%xmm2, %%xmm1 \n"
 					"add $16, %[in] \n"
 					"add $16, %[out] \n"
 					"dec %[num] \n"
 					"jnz 1b \n"
-					"movups	%%xmm1, (%[iv]) \n"
+					"movups %%xmm1, (%[iv]) \n"
 					:
 					: [iv]"r"((uint8_t *)m_IV), [sched]"r"(m_ECBDecryption.GetKeySchedule ()),
 						[in]"r"(in), [out]"r"(out), [num]"r"(numBlocks)
@@ -1021,12 +992,12 @@ namespace crypto
 		{
 			__asm__
 				(
-					"movups	(%[iv]), %%xmm1 \n"
-					"movups	(%[in]), %%xmm0 \n"
-					"movups	%%xmm0, (%[iv]) \n"
+					"movups (%[iv]), %%xmm1 \n"
+					"movups (%[in]), %%xmm0 \n"
+					"movups %%xmm0, (%[iv]) \n"
 					DecryptAES256(sched)
 					"pxor %%xmm1, %%xmm0 \n"
-					"movups	%%xmm0, (%[out]) \n"
+					"movups %%xmm0, (%[out]) \n"
 					:
 					: [iv]"r"((uint8_t *)m_IV), [sched]"r"(m_ECBDecryption.GetKeySchedule ()),
 						[in]"r"(in), [out]"r"(out)
@@ -1046,7 +1017,7 @@ namespace crypto
 			__asm__
 				(
 					// encrypt IV
-					"movups	(%[in]), %%xmm0 \n"
+					"movups (%[in]), %%xmm0 \n"
 					EncryptAES256(sched_iv)
 					"movaps %%xmm0, %%xmm1 \n"
 					// double IV encryption
@@ -1056,11 +1027,11 @@ namespace crypto
 					"1: \n"
 					"add $16, %[in] \n"
 					"add $16, %[out] \n"
-					"movups	(%[in]), %%xmm0 \n"
+					"movups (%[in]), %%xmm0 \n"
 					"pxor %%xmm1, %%xmm0 \n"
 					EncryptAES256(sched_l)
-					"movaps	%%xmm0, %%xmm1 \n"
-					"movups	%%xmm0, (%[out]) \n"
+					"movaps %%xmm0, %%xmm1 \n"
+					"movups %%xmm0, (%[out]) \n"
 					"dec %[num] \n"
 					"jnz 1b \n"
 					:
@@ -1097,11 +1068,11 @@ namespace crypto
 					"1: \n"
 					"add $16, %[in] \n"
 					"add $16, %[out] \n"
-					"movups	(%[in]), %%xmm0 \n"
+					"movups (%[in]), %%xmm0 \n"
 					"movaps %%xmm0, %%xmm2 \n"
 					DecryptAES256(sched_l)
 					"pxor %%xmm1, %%xmm0 \n"
-					"movups	%%xmm0, (%[out]) \n"
+					"movups %%xmm0, (%[out]) \n"
 					"movaps %%xmm2, %%xmm1 \n"
 					"dec %[num] \n"
 					"jnz 1b \n"
@@ -1306,7 +1277,7 @@ namespace crypto
 			EVP_PKEY_CTX_set1_hkdf_key (pctx, tempKey, len);
 		}
 		if (info.length () > 0)
-			EVP_PKEY_CTX_add1_hkdf_info (pctx, info.c_str (), info.length ());
+			EVP_PKEY_CTX_add1_hkdf_info (pctx, (const uint8_t *)info.c_str (), info.length ());
 		EVP_PKEY_derive (pctx, out, &outLen);
 		EVP_PKEY_CTX_free (pctx);
 #else
@@ -1323,9 +1294,79 @@ namespace crypto
 #endif
 	}
 
+// Noise
+	
+	void NoiseSymmetricState::MixHash (const uint8_t * buf, size_t len)
+	{
+		SHA256_CTX ctx;
+		SHA256_Init (&ctx);
+		SHA256_Update (&ctx, m_H, 32);
+		SHA256_Update (&ctx, buf, len);
+		SHA256_Final (m_H, &ctx);
+	}
+
+	void NoiseSymmetricState::MixKey (const uint8_t * sharedSecret)
+	{
+		HKDF (m_CK, sharedSecret, 32, "", m_CK);
+		// new ck is m_CK[0:31], key is m_CK[32:63]
+	}
+
+	static void InitNoiseState (NoiseSymmetricState& state, const uint8_t * ck, 
+		const uint8_t * hh, const uint8_t * pub)
+	{
+		// pub is Bob's public static key, hh = SHA256(h)
+		memcpy (state.m_CK, ck, 32);
+		SHA256_CTX ctx;
+		SHA256_Init (&ctx);
+		SHA256_Update (&ctx, hh, 32);
+		SHA256_Update (&ctx, pub, 32);
+		SHA256_Final (state.m_H, &ctx);  // h = MixHash(pub) = SHA256(hh || pub)
+	}	
+	
+	void InitNoiseNState (NoiseSymmetricState& state, const uint8_t * pub)
+	{
+		static const char protocolName[] = "Noise_N_25519_ChaChaPoly_SHA256"; // 31 chars
+		static const uint8_t hh[32] =
+		{
+			0x69, 0x4d, 0x52, 0x44, 0x5a, 0x27, 0xd9, 0xad, 0xfa, 0xd2, 0x9c, 0x76, 0x32, 0x39, 0x5d, 0xc1, 
+			0xe4, 0x35, 0x4c, 0x69, 0xb4, 0xf9, 0x2e, 0xac, 0x8a, 0x1e, 0xe4, 0x6a, 0x9e, 0xd2, 0x15, 0x54
+		}; // hh = SHA256(protocol_name || 0)
+		InitNoiseState (state, (const uint8_t *)protocolName, hh, pub); // ck = protocol_name || 0
+	}	
+		
+	void InitNoiseXKState (NoiseSymmetricState& state, const uint8_t * pub)
+	{
+		static const uint8_t protocolNameHash[] =
+		{
+			0x72, 0xe8, 0x42, 0xc5, 0x45, 0xe1, 0x80, 0x80, 0xd3, 0x9c, 0x44, 0x93, 0xbb, 0x91, 0xd7, 0xed,
+			0xf2, 0x28, 0x98, 0x17, 0x71, 0x21, 0x8c, 0x1f, 0x62, 0x4e, 0x20, 0x6f, 0x28, 0xd3, 0x2f, 0x71
+		}; // SHA256 ("Noise_XKaesobfse+hs2+hs3_25519_ChaChaPoly_SHA256")
+		static const uint8_t hh[32] =
+		{
+			0x49, 0xff, 0x48, 0x3f, 0xc4, 0x04, 0xb9, 0xb2, 0x6b, 0x11, 0x94, 0x36, 0x72, 0xff, 0x05, 0xb5,
+			0x61, 0x27, 0x03, 0x31, 0xba, 0x89, 0xb8, 0xfc, 0x33, 0x15, 0x93, 0x87, 0x57, 0xdd, 0x3d, 0x1e
+		}; // SHA256 (protocolNameHash)
+		InitNoiseState (state, protocolNameHash, hh, pub); 
+	}	
+
+	void InitNoiseIKState (NoiseSymmetricState& state, const uint8_t * pub)
+	{
+		static const uint8_t protocolNameHash[32] =
+		{
+			0x4c, 0xaf, 0x11, 0xef, 0x2c, 0x8e, 0x36, 0x56, 0x4c, 0x53, 0xe8, 0x88, 0x85, 0x06, 0x4d, 0xba,
+			0xac, 0xbe, 0x00, 0x54, 0xad, 0x17, 0x8f, 0x80, 0x79, 0xa6, 0x46, 0x82, 0x7e, 0x6e, 0xe4, 0x0c
+		}; // SHA256("Noise_IKelg2+hs2_25519_ChaChaPoly_SHA256"), 40 bytes
+		static const uint8_t hh[32] =
+		{
+			0x9c, 0xcf, 0x85, 0x2c, 0xc9, 0x3b, 0xb9, 0x50, 0x44, 0x41, 0xe9, 0x50, 0xe0, 0x1d, 0x52, 0x32,
+			0x2e, 0x0d, 0x47, 0xad, 0xd1, 0xe9, 0xa5, 0x55, 0xf7, 0x55, 0xb5, 0x69, 0xae, 0x18, 0x3b, 0x5c
+		}; // SHA256 (protocolNameHash)
+		InitNoiseState (state, protocolNameHash, hh, pub); 
+	}	
+	
 // init and terminate
 
-/*	std::vector <std::unique_ptr<std::mutex> >  m_OpenSSLMutexes;
+/*	std::vector <std::unique_ptr<std::mutex> > m_OpenSSLMutexes;
 	static void OpensslLockingCallback(int mode, int type, const char * file, int line)
 	{
 		if (type > 0 && (size_t)type < m_OpenSSLMutexes.size ())
@@ -1337,10 +1378,9 @@ namespace crypto
 		}
 	}*/
 
-
-	void InitCrypto (bool precomputation)
+	void InitCrypto (bool precomputation, bool aesni, bool avx, bool force)
 	{
-		i2p::cpu::Detect ();
+		i2p::cpu::Detect (aesni, avx, force);
 #if LEGACY_OPENSSL
 		SSL_library_init ();
 #endif

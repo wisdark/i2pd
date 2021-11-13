@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2020, The PurpleI2P Project
+* Copyright (c) 2013-2021, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -7,7 +7,6 @@
 */
 
 #include <stdlib.h>
-#include <boost/bind.hpp>
 #include "Log.h"
 #include "Timestamp.h"
 #include "NetDb.hpp"
@@ -34,7 +33,6 @@ namespace transport
 
 	SSUData::SSUData (SSUSession& session):
 		m_Session (session), m_ResendTimer (session.GetService ()),
-		m_IncompleteMessagesCleanupTimer (session.GetService ()),
 		m_MaxPacketSize (session.IsV6 () ? SSU_V6_MAX_PACKET_SIZE : SSU_V4_MAX_PACKET_SIZE),
 		m_PacketSize (m_MaxPacketSize), m_LastMessageReceivedTime (0)
 	{
@@ -46,13 +44,11 @@ namespace transport
 
 	void SSUData::Start ()
 	{
-		ScheduleIncompleteMessagesCleanup ();
 	}
 
 	void SSUData::Stop ()
 	{
 		m_ResendTimer.cancel ();
-		m_IncompleteMessagesCleanupTimer.cancel ();
 		m_IncompleteMessages.clear ();
 		m_SentMessages.clear ();
 		m_ReceivedMessages.clear ();
@@ -141,7 +137,7 @@ namespace transport
 							if (bitfield & mask)
 							{
 								if (fragment < numSentFragments)
-									it->second->fragments[fragment].reset (nullptr);
+									it->second->fragments[fragment] = nullptr;
 							}
 							fragment++;
 							mask <<= 1;
@@ -180,13 +176,19 @@ namespace transport
 			if (it == m_IncompleteMessages.end ())
 			{
 				// create new message
-				auto msg = NewI2NPShortMessage ();
+				auto msg = (!fragmentNum && fragmentSize > 0 && buf[I2NP_SHORT_HEADER_TYPEID_OFFSET] == eI2NPTunnelData) ?
+					NewI2NPTunnelMessage (true) : NewI2NPShortMessage ();
 				msg->len -= I2NP_SHORT_HEADER_SIZE;
 				it = m_IncompleteMessages.insert (std::make_pair (msgID,
-					std::unique_ptr<IncompleteMessage>(new IncompleteMessage (msg)))).first;
+					m_Session.GetServer ().GetIncompleteMessagesPool ().AcquireShared (msg))).first;
 			}
-			std::unique_ptr<IncompleteMessage>& incompleteMessage = it->second;
-
+			auto& incompleteMessage = it->second;
+			// mark fragment as received
+			if (fragmentNum < 64)
+				incompleteMessage->receivedFragmentsBits |= (uint64_t(0x01) << fragmentNum);
+			else
+				LogPrint (eLogWarning, "SSU: Fragment number ", fragmentNum, " exceeds 64");
+			
 			// handle current fragment
 			if (fragmentNum == incompleteMessage->nextFragmentNum)
 			{
@@ -220,8 +222,8 @@ namespace transport
 				{
 					// missing fragment
 					LogPrint (eLogWarning, "SSU: Missing fragments from ", (int)incompleteMessage->nextFragmentNum, " to ", fragmentNum - 1, " of message ", msgID);
-					auto savedFragment = new Fragment (fragmentNum, buf, fragmentSize, isLast);
-					if (incompleteMessage->savedFragments.insert (std::unique_ptr<Fragment>(savedFragment)).second)
+					auto savedFragment = m_Session.GetServer ().GetFragmentsPool ().AcquireShared (fragmentNum, buf, fragmentSize, isLast);
+					if (incompleteMessage->savedFragments.insert (savedFragment).second)	
 						incompleteMessage->lastFragmentInsertTime = i2p::util::GetSecondsSinceEpoch ();
 					else
 						LogPrint (eLogWarning, "SSU: Fragment ", (int)fragmentNum, " of message ", msgID, " already saved");
@@ -242,11 +244,11 @@ namespace transport
 				{
 					if (!m_ReceivedMessages.count (msgID))
 					{
-						m_ReceivedMessages.insert (msgID);
 						m_LastMessageReceivedTime = i2p::util::GetSecondsSinceEpoch ();
+						m_ReceivedMessages.emplace (msgID, m_LastMessageReceivedTime);
 						if (!msg->IsExpired ())
 						{
-							m_Handler.PutNextMessage (msg);
+							m_Handler.PutNextMessage (std::move (msg));
 						}
 						else
 							LogPrint (eLogDebug, "SSU: message expired");
@@ -267,7 +269,7 @@ namespace transport
 				}
 			}
 			else
-				SendFragmentAck (msgID, fragmentNum);
+				SendFragmentAck (msgID, incompleteMessage->receivedFragmentsBits);
 			buf += fragmentSize;
 		}
 	}
@@ -301,7 +303,7 @@ namespace transport
 	void SSUData::Send (std::shared_ptr<i2p::I2NPMessage> msg)
 	{
 		uint32_t msgID = msg->ToSSU ();
-		if (m_SentMessages.count (msgID) > 0)
+		if (m_SentMessages.find (msgID) != m_SentMessages.end())
 		{
 			LogPrint (eLogWarning, "SSU: message ", msgID, " already sent");
 			return;
@@ -309,8 +311,8 @@ namespace transport
 		if (m_SentMessages.empty ()) // schedule resend at first message only
 			ScheduleResend ();
 
-		auto ret = m_SentMessages.insert (std::make_pair (msgID, std::unique_ptr<SentMessage>(new SentMessage)));
-		std::unique_ptr<SentMessage>& sentMessage = ret.first->second;
+		auto ret = m_SentMessages.emplace (msgID, m_Session.GetServer ().GetSentMessagesPool ().AcquireShared ());
+		auto& sentMessage = ret.first->second;
 		if (ret.second)
 		{
 			sentMessage->nextResendTime = i2p::util::GetSecondsSinceEpoch () + RESEND_INTERVAL;
@@ -324,10 +326,9 @@ namespace transport
 		uint32_t fragmentNum = 0;
 		while (len > 0 && fragmentNum <= 127)
 		{
-			Fragment * fragment = new Fragment;
+			auto fragment = m_Session.GetServer ().GetFragmentsPool ().AcquireShared ();
 			fragment->fragmentNum = fragmentNum;
-			uint8_t * buf = fragment->buf;
-			uint8_t	* payload = buf + sizeof (SSUHeader);
+			uint8_t	* payload = fragment->buf + sizeof (SSUHeader);
 			*payload = DATA_FLAG_WANT_REPLY; // for compatibility
 			payload++;
 			*payload = 1; // always 1 message fragment per message
@@ -346,14 +347,20 @@ namespace transport
 			payload += 3;
 			memcpy (payload, msgBuf, size);
 
-			size += payload - buf;
-			if (size & 0x0F) // make sure 16 bytes boundary
-				size = ((size >> 4) + 1) << 4; // (/16 + 1)*16
+			size += payload - fragment->buf;
+			uint8_t rem = size & 0x0F;
+			if (rem) // make sure 16 bytes boundary
+			{	
+				auto padding = 16 - rem;
+				memset (fragment->buf + size, 0, padding);
+				size += padding;
+			}	
 			fragment->len = size;
-			fragments.push_back (std::unique_ptr<Fragment> (fragment));
+			fragments.push_back (fragment);
 
 			// encrypt message with session key
-			m_Session.FillHeaderAndEncrypt (PAYLOAD_TYPE_DATA, buf, size);
+			uint8_t buf[SSU_V4_MAX_PACKET_SIZE + 18];
+			m_Session.FillHeaderAndEncrypt (PAYLOAD_TYPE_DATA, fragment->buf, size, buf);
 			try
 			{
 				m_Session.Send (buf, size);
@@ -390,13 +397,9 @@ namespace transport
 		m_Session.Send (buf, 48);
 	}
 
-	void SSUData::SendFragmentAck (uint32_t msgID, int fragmentNum)
+	void SSUData::SendFragmentAck (uint32_t msgID, uint64_t bits)
 	{
-		if (fragmentNum > 64)
-		{
-			LogPrint (eLogWarning, "SSU: Fragment number ", fragmentNum, " exceeds 64");
-			return;
-		}
+		if (!bits) return;
 		uint8_t buf[64 + 18] = {0};
 		uint8_t * payload = buf + sizeof (SSUHeader);
 		*payload = DATA_FLAG_ACK_BITFIELDS_INCLUDED; // flag
@@ -406,14 +409,16 @@ namespace transport
 		// one ack
 		*(uint32_t *)(payload) = htobe32 (msgID); // msgID
 		payload += 4;
-		div_t d = div (fragmentNum, 7);
-		memset (payload, 0x80, d.quot); // 0x80 means non-last
-		payload += d.quot;
-		*payload = 0x01 << d.rem; // set corresponding bit
-		payload++;
+		size_t len = 0; 
+		while (bits)
+		{
+			*payload = (bits & 0x7F); // next 7 bits
+			bits >>= 7;
+			if (bits) *payload &= 0x80; // 0x80 means non-last
+			payload++; len++;
+		}	
 		*payload = 0; // number of fragments
-
-		size_t len = d.quot < 4 ? 48 : 64; // 48 = 37 + 7 + 4 (3+1)
+		len = (len <= 4) ? 48 : 64; // 48 = 37 + 7 + 4
 		// encrypt message with session key
 		m_Session.FillHeaderAndEncrypt (PAYLOAD_TYPE_DATA, buf, len);
 		m_Session.Send (buf, len);
@@ -432,6 +437,7 @@ namespace transport
 	{
 		if (ecode != boost::asio::error::operation_aborted)
 		{
+			uint8_t buf[SSU_V4_MAX_PACKET_SIZE + 18];
 			uint32_t ts = i2p::util::GetSecondsSinceEpoch ();
 			int numResent = 0;
 			for (auto it = m_SentMessages.begin (); it != m_SentMessages.end ();)
@@ -444,8 +450,9 @@ namespace transport
 							if (f)
 							{
 								try
-								{
-									m_Session.Send (f->buf, f->len); // resend
+								{					
+									m_Session.FillHeaderAndEncrypt (PAYLOAD_TYPE_DATA, f->buf, f->len, buf);
+									m_Session.Send (buf, f->len); // resend
 									numResent++;
 								}
 								catch (boost::system::system_error& ec)
@@ -478,37 +485,33 @@ namespace transport
 		}
 	}
 
-	void SSUData::ScheduleIncompleteMessagesCleanup ()
+	void SSUData::CleanUp (uint64_t ts)
 	{
-		m_IncompleteMessagesCleanupTimer.cancel ();
-		m_IncompleteMessagesCleanupTimer.expires_from_now (boost::posix_time::seconds(INCOMPLETE_MESSAGES_CLEANUP_TIMEOUT));
-		auto s = m_Session.shared_from_this();
-		m_IncompleteMessagesCleanupTimer.async_wait ([s](const boost::system::error_code& ecode)
-			{ s->m_Data.HandleIncompleteMessagesCleanupTimer (ecode); });
-	}
-
-	void SSUData::HandleIncompleteMessagesCleanupTimer (const boost::system::error_code& ecode)
-	{
-		if (ecode != boost::asio::error::operation_aborted)
+		for (auto it = m_IncompleteMessages.begin (); it != m_IncompleteMessages.end ();)
 		{
-			uint32_t ts = i2p::util::GetSecondsSinceEpoch ();
-			for (auto it = m_IncompleteMessages.begin (); it != m_IncompleteMessages.end ();)
+			if (ts > it->second->lastFragmentInsertTime + INCOMPLETE_MESSAGES_CLEANUP_TIMEOUT)
 			{
-				if (ts > it->second->lastFragmentInsertTime + INCOMPLETE_MESSAGES_CLEANUP_TIMEOUT)
-				{
-					LogPrint (eLogWarning, "SSU: message ", it->first, " was not completed in ", INCOMPLETE_MESSAGES_CLEANUP_TIMEOUT, " seconds, deleted");
-					it = m_IncompleteMessages.erase (it);
-				}
+				LogPrint (eLogWarning, "SSU: message ", it->first, " was not completed in ", INCOMPLETE_MESSAGES_CLEANUP_TIMEOUT, " seconds, deleted");
+				it = m_IncompleteMessages.erase (it);
+			}
+			else
+				++it;
+		}
+	
+		if (m_ReceivedMessages.size () > MAX_NUM_RECEIVED_MESSAGES || ts > m_LastMessageReceivedTime + DECAY_INTERVAL)
+			// decay
+			m_ReceivedMessages.clear ();
+		else
+		{
+			// delete old received messages	
+			for (auto it = m_ReceivedMessages.begin (); it != m_ReceivedMessages.end ();)
+			{
+				if (ts > it->second + RECEIVED_MESSAGES_CLEANUP_TIMEOUT)
+					it = m_ReceivedMessages.erase (it);
 				else
 					++it;
-			}
-			// decay
-			if (m_ReceivedMessages.size () > MAX_NUM_RECEIVED_MESSAGES ||
-				i2p::util::GetSecondsSinceEpoch () > m_LastMessageReceivedTime + DECAY_INTERVAL)
-				m_ReceivedMessages.clear ();
-
-			ScheduleIncompleteMessagesCleanup ();
-		}
-	}
+			}		
+		}		
+	}	
 }
 }

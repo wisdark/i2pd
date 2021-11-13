@@ -34,14 +34,13 @@ namespace client
 	// TODO: this is actually proxy class
 	class AddressBookFilesystemStorage: public AddressBookStorage
 	{
-		private:
-			i2p::fs::HashedStorage storage;
-			std::string etagsPath, indexPath, localPath;
-
 		public:
+		
 			AddressBookFilesystemStorage (): storage("addressbook", "b", "", "b32")
 			{
 				i2p::config::GetOption("persist.addressbook", m_IsPersist);
+				if (m_IsPersist)
+					i2p::config::GetOption("addressbook.hostsfile", m_HostsFile);
 			}
 			std::shared_ptr<const i2p::data::IdentityEx> GetAddress (const i2p::data::IdentHash& ident) const;
 			void AddAddress (std::shared_ptr<const i2p::data::IdentityEx> address);
@@ -62,7 +61,10 @@ namespace client
 
 		private:
 
+			i2p::fs::HashedStorage storage;
+			std::string etagsPath, indexPath, localPath;	
 			bool m_IsPersist;
+			std::string m_HostsFile; // file to dump hosts.txt, empty if not used
 	};
 
 	bool AddressBookFilesystemStorage::Init()
@@ -183,30 +185,59 @@ namespace client
 
 	int AddressBookFilesystemStorage::Save (const std::map<std::string, std::shared_ptr<Address> >& addresses)
 	{
-		if (addresses.empty()) {
+		if (addresses.empty()) 
+		{
 			LogPrint(eLogWarning, "Addressbook: not saving empty addressbook");
 			return 0;
 		}
 
 		int num = 0;
-		std::ofstream f (indexPath, std::ofstream::out); // in text mode
-
-		if (!f.is_open ()) {
-			LogPrint (eLogWarning, "Addressbook: Can't open ", indexPath);
-			return 0;
-		}
-
-		for (const auto& it: addresses)
 		{
-			f << it.first << ",";
-			if (it.second->IsIdentHash ())
-				f << it.second->identHash.ToBase32 ();
+			// save index file
+			std::ofstream f (indexPath, std::ofstream::out); // in text mode
+			if (f.is_open ())
+			{
+				for (const auto& it: addresses)
+				{
+					if (it.second->IsValid ())
+					{	
+						f << it.first << ",";
+						if (it.second->IsIdentHash ())
+							f << it.second->identHash.ToBase32 ();
+						else
+							f << it.second->blindedPublicKey->ToB33 ();
+						f << std::endl;
+						num++;
+					}	
+					else
+						LogPrint (eLogWarning, "Addressbook: invalid address ", it.first);
+				}
+				LogPrint (eLogInfo, "Addressbook: ", num, " addresses saved");
+			}	
 			else
-				f << it.second->blindedPublicKey->ToB33 ();
-			f << std::endl;
-			num++;
-		}
-		LogPrint (eLogInfo, "Addressbook: ", num, " addresses saved");
+				LogPrint (eLogWarning, "Addressbook: Can't open ", indexPath);
+		}	
+		if (!m_HostsFile.empty ())
+		{
+			// dump full hosts.txt
+			std::ofstream f (m_HostsFile, std::ofstream::out); // in text mode
+			if (f.is_open ())
+			{
+				for (const auto& it: addresses)
+				{
+					std::shared_ptr<const i2p::data::IdentityEx> addr;
+					if (it.second->IsIdentHash ()) 
+					{	
+						addr = GetAddress (it.second->identHash);
+						if (addr)
+							f << it.first << "=" << addr->ToBase64 () << std::endl;
+					}	
+				}	
+			}	
+			else
+				LogPrint (eLogWarning, "Addressbook: Can't open ", m_HostsFile);
+		}	
+		
 		return num;
 	}
 
@@ -439,6 +470,20 @@ namespace client
 				if (pos != std::string::npos)
 					addr = addr.substr(0, pos); // remove comments
 
+				pos = name.find(".b32.i2p");
+				if (pos != std::string::npos)
+				{
+					LogPrint (eLogError, "Addressbook: skipped adding of b32 address: ", name);
+					continue;
+				}
+
+				pos = name.find(".i2p");
+				if (pos == std::string::npos)
+				{
+					LogPrint (eLogError, "Addressbook: malformed domain: ", name);
+					continue;
+				}
+
 				auto ident = std::make_shared<i2p::data::IdentityEx> ();
 				if (!ident->FromBase64(addr)) {
 					LogPrint (eLogError, "Addressbook: malformed address ", addr, " for ", name);
@@ -449,17 +494,18 @@ namespace client
 				auto it = m_Addresses.find (name);
 				if (it != m_Addresses.end ()) // already exists ?
 				{
-					if (it->second->IsIdentHash () && it->second->identHash != ident->GetIdentHash ()) // address changed?
+					if (it->second->IsIdentHash () && it->second->identHash != ident->GetIdentHash () &&  // address changed?
+						ident->GetSigningKeyType () != i2p::data::SIGNING_KEY_TYPE_DSA_SHA1) // don't replace by DSA 
 					{
 						it->second->identHash = ident->GetIdentHash ();
 						m_Storage->AddAddress (ident);
+						m_Storage->RemoveAddress (it->second->identHash);
 						LogPrint (eLogInfo, "Addressbook: updated host: ", name);
 					}
 				}
 				else
 				{
-					//m_Addresses.emplace (name, std::make_shared<Address>(ident->GetIdentHash ()));
-					m_Addresses[name] = std::make_shared<Address>(ident->GetIdentHash ()); // for gcc 4.7
+					m_Addresses.emplace (name, std::make_shared<Address>(ident->GetIdentHash ()));
 					m_Storage->AddAddress (ident);
 					if (is_update)
 						LogPrint (eLogInfo, "Addressbook: added new host: ", name);
@@ -488,7 +534,7 @@ namespace client
 				while (!f.eof ())
 				{
 					getline(f, s);
-					if (!s.length()) continue; // skip empty line
+					if (s.empty () || s[0] == '#') continue; // skip empty line or comment
 					m_Subscriptions.push_back (std::make_shared<AddressBookSubscription> (*this, s));
 				}
 				LogPrint (eLogInfo, "Addressbook: ", m_Subscriptions.size (), " subscriptions urls loaded");
@@ -501,9 +547,10 @@ namespace client
 				std::vector<std::string> subsList;
 				boost::split(subsList, subscriptionURLs, boost::is_any_of(","), boost::token_compress_on);
 
-				for (size_t i = 0; i < subsList.size (); i++)
+				for (const auto& s: subsList)
 				{
-					m_Subscriptions.push_back (std::make_shared<AddressBookSubscription> (*this, subsList[i]));
+					if (s.empty () || s[0] == '#') continue; // skip empty line or comment
+					m_Subscriptions.push_back (std::make_shared<AddressBookSubscription> (*this, s));
 				}
 				LogPrint (eLogInfo, "Addressbook: ", m_Subscriptions.size (), " subscriptions urls loaded");
 			}
@@ -742,6 +789,8 @@ namespace client
 
 	void AddressBookSubscription::CheckUpdates ()
 	{
+		i2p::util::SetThreadName("Addressbook");
+
 		bool result = MakeRequest ();
 		m_Book.DownloadComplete (result, m_Ident, m_Etag, m_LastModified);
 	}
@@ -801,6 +850,7 @@ namespace client
 		i2p::http::HTTPReq req;
 		req.AddHeader("Host", dest_host);
 		req.AddHeader("User-Agent", "Wget/1.11.4");
+		req.AddHeader("Accept-Encoding", "gzip");
 		req.AddHeader("X-Accept-Encoding", "x-i2p-gzip;q=1.0, identity;q=0.5, deflate;q=0, gzip;q=0, *;q=0");
 		req.AddHeader("Connection", "close");
 		if (!m_Etag.empty())
@@ -811,6 +861,7 @@ namespace client
 		url.schema = "";
 		url.host   = "";
 		req.uri    = url.to_string();
+		req.version = "HTTP/1.1";
 		auto stream = i2p::client::context.GetSharedLocalDestination ()->CreateStream (leaseSet, dest_port);
 		std::string request = req.to_string();
 		stream->Send ((const uint8_t *) request.data(), request.length());
@@ -882,7 +933,7 @@ namespace client
 		/* assert: res.code == 200 */
 		auto it = res.headers.find("ETag");
 		if (it != res.headers.end()) m_Etag = it->second;
-		it = res.headers.find("If-Modified-Since");
+		it = res.headers.find("Last-Modified");
 		if (it != res.headers.end()) m_LastModified = it->second;
 		if (res.is_chunked())
 		{
@@ -890,7 +941,7 @@ namespace client
 			i2p::http::MergeChunkedResponse (in, out);
 			response = out.str();
 		}
-		else if (res.is_gzipped())
+		if (res.is_gzipped())
 		{
 			std::stringstream out;
 			i2p::data::GzipInflator inflator;

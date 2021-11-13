@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2020, The PurpleI2P Project
+* Copyright (c) 2013-2021, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -39,7 +39,9 @@
 #       define OPENSSL_HKDF 1
 #       define OPENSSL_EDDSA 1
 #       define OPENSSL_X25519 1
-#       define OPENSSL_SIPHASH 1
+#		if (OPENSSL_VERSION_NUMBER < 0x030000000) // 3.0.0, regression in SipHash
+#       	define OPENSSL_SIPHASH 1
+#		endif
 #   endif
 #   if !defined OPENSSL_NO_CHACHA && !defined OPENSSL_NO_POLY1305 // some builds might not include them
 #       define OPENSSL_AEAD_CHACHA20_POLY1305 1
@@ -89,8 +91,11 @@ namespace crypto
 			const uint8_t * GetPublicKey () const { return m_PublicKey; };
 			void GetPrivateKey (uint8_t * priv) const;
 			void SetPrivateKey (const uint8_t * priv, bool calculatePublic = false);
-			void Agree (const uint8_t * pub, uint8_t * shared);
+			bool Agree (const uint8_t * pub, uint8_t * shared);
 
+			bool IsElligatorIneligible () const { return m_IsElligatorIneligible; }
+			void SetElligatorIneligible () { m_IsElligatorIneligible = true; }
+			
 		private:
 
 			uint8_t m_PublicKey[32];
@@ -101,16 +106,17 @@ namespace crypto
 			BN_CTX * m_Ctx;
 			uint8_t m_PrivateKey[32];
 #endif
+			bool m_IsElligatorIneligible = false; // true if definitly ineligible
 	};
 
 	// ElGamal
-	void ElGamalEncrypt (const uint8_t * key, const uint8_t * data, uint8_t * encrypted, BN_CTX * ctx, bool zeroPadding = false);
-	bool ElGamalDecrypt (const uint8_t * key, const uint8_t * encrypted, uint8_t * data, BN_CTX * ctx, bool zeroPadding = false);
+	void ElGamalEncrypt (const uint8_t * key, const uint8_t * data, uint8_t * encrypted); // 222 bytes data, 514 bytes encrypted 
+	bool ElGamalDecrypt (const uint8_t * key, const uint8_t * encrypted, uint8_t * data); // 514 bytes encrypted, 222 data
 	void GenerateElGamalKeyPair (uint8_t * priv, uint8_t * pub);
 
 	// ECIES
-	void ECIESEncrypt (const EC_GROUP * curve, const EC_POINT * key, const uint8_t * data, uint8_t * encrypted, BN_CTX * ctx, bool zeroPadding = false); // 222 bytes data, 514 bytes encrypted with zeropadding, 512 without
-	bool ECIESDecrypt (const EC_GROUP * curve, const BIGNUM * key, const uint8_t * encrypted, uint8_t * data, BN_CTX * ctx, bool zeroPadding = false);
+	void ECIESEncrypt (const EC_GROUP * curve, const EC_POINT * key, const uint8_t * data, uint8_t * encrypted); // 222 bytes data, 514 bytes encrypted
+	bool ECIESDecrypt (const EC_GROUP * curve, const BIGNUM * key, const uint8_t * encrypted, uint8_t * data); // 514 bytes encrypted, 222 data
 	void GenerateECIESKeyPair (const EC_GROUP * curve, BIGNUM *& priv, EC_POINT *& pub);
 
 	// HMAC
@@ -165,9 +171,6 @@ namespace crypto
 
 
 #ifdef __AES__
-	#ifdef ARM64AES
-		void init_aesenc(void) __attribute__((constructor));
-	#endif
 	class ECBCryptoAESNI
 	{
 		public:
@@ -307,8 +310,22 @@ namespace crypto
 
 	void HKDF (const uint8_t * salt, const uint8_t * key, size_t keyLen, const std::string& info, uint8_t * out, size_t outLen = 64); // salt - 32, out - 32 or 64, info <= 32
 
+// Noise
+
+	struct NoiseSymmetricState
+	{
+		uint8_t m_H[32] /*h*/, m_CK[64] /*[ck, k]*/;
+
+		void MixHash (const uint8_t * buf, size_t len);
+		void MixKey (const uint8_t * sharedSecret);	
+	};
+
+	void InitNoiseNState (NoiseSymmetricState& state, const uint8_t * pub); // Noise_N (tunnels, router)
+	void InitNoiseXKState (NoiseSymmetricState& state, const uint8_t * pub); // Noise_XK (NTCP2)
+	void InitNoiseIKState (NoiseSymmetricState& state, const uint8_t * pub); // Noise_IK (ratchets)
+	
 // init and terminate
-	void InitCrypto (bool precomputation);
+	void InitCrypto (bool precomputation, bool aesni, bool avx, bool force);
 	void TerminateCrypto ();
 }
 }

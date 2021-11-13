@@ -31,6 +31,7 @@
 #define ID_RELOAD 2006
 #define ID_ACCEPT_TRANSIT 2007
 #define ID_DECLINE_TRANSIT 2008
+#define ID_DATADIR 2009
 
 #define ID_TRAY_ICON 2050
 #define WM_TRAYICON (WM_USER + 1)
@@ -43,16 +44,14 @@ namespace i2p
 {
 namespace win32
 {
-	static DWORD GracefulShutdownEndtime = 0;
-
-	typedef DWORD (* IPN)();
-	IPN GetTickCountLocal = (IPN)GetProcAddress (GetModuleHandle ("KERNEL32.dll"), "GetTickCount");
+	DWORD g_GracefulShutdownEndtime = 0;
 
 	static void ShowPopupMenu (HWND hWnd, POINT *curpos, int wDefaultItem)
 	{
 		HMENU hPopup = CreatePopupMenu();
 		InsertMenu (hPopup, -1, MF_BYPOSITION | MF_STRING, ID_CONSOLE, "Open &console");
-		InsertMenu (hPopup, -1, MF_BYPOSITION | MF_STRING, ID_APP, "Show app");
+		InsertMenu (hPopup, -1, MF_BYPOSITION | MF_STRING, ID_DATADIR, "Open &datadir");
+		InsertMenu (hPopup, -1, MF_BYPOSITION | MF_STRING, ID_APP, "&Show app");
 		InsertMenu (hPopup, -1, MF_BYPOSITION | MF_STRING, ID_ABOUT, "&About...");
 		InsertMenu (hPopup, -1, MF_BYPOSITION | MF_SEPARATOR, 0, NULL);
 		if(!i2p::context.AcceptsTunnels())
@@ -83,18 +82,19 @@ namespace win32
 		DestroyMenu(hPopup);
 	}
 
-	static void AddTrayIcon (HWND hWnd)
+	static void AddTrayIcon (HWND hWnd, bool notify = false)
 	{
 		NOTIFYICONDATA nid;
 		memset(&nid, 0, sizeof(nid));
 		nid.cbSize = sizeof(nid);
 		nid.hWnd = hWnd;
 		nid.uID = ID_TRAY_ICON;
+		nid.uFlags = notify ? NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_INFO : NIF_ICON | NIF_MESSAGE | NIF_TIP;
 		nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_INFO;
 		nid.uCallbackMessage = WM_TRAYICON;
 		nid.hIcon = LoadIcon (GetModuleHandle(NULL), MAKEINTRESOURCE (MAINICON));
 		strcpy (nid.szTip, "i2pd");
-		strcpy (nid.szInfo, "i2pd is starting");
+		if (notify) strcpy (nid.szInfo, "i2pd is starting");
 		Shell_NotifyIcon(NIM_ADD, &nid );
 	}
 
@@ -133,7 +133,7 @@ namespace win32
 		transfer >>= 10;
 		auto mbytes = transfer & 0x03ff;
 		transfer >>= 10;
-		auto gbytes = transfer & 0x03ff;
+		auto gbytes = transfer;
 
 		if (gbytes)
 			s << gbytes << " GB, ";
@@ -144,32 +144,54 @@ namespace win32
 		s << bytes << " Bytes\n";
 	}
 
+	static void ShowNetworkStatus (std::stringstream& s, RouterStatus status)
+	{
+		switch (status)
+		{
+			case eRouterStatusOK: s << "OK"; break;
+			case eRouterStatusTesting: s << "Test"; break;
+			case eRouterStatusFirewalled: s << "FW"; break;
+			case eRouterStatusUnknown: s << "Unk"; break;
+			case eRouterStatusProxy: s << "Proxy"; break;
+			case eRouterStatusMesh: s << "Mesh"; break;
+			case eRouterStatusError:
+			{
+				s << "Err";
+				switch (i2p::context.GetError ())
+				{
+					case eRouterErrorClockSkew:
+						s << " - Clock skew";
+					break;
+					case eRouterErrorOffline:
+						s << " - Offline";
+					break;
+					case eRouterErrorSymmetricNAT:
+						s << " - Symmetric NAT";
+					break;
+					default: ;
+				}
+				break;
+			}
+			default: s << "Unk";
+		}
+	}
+
 	static void PrintMainWindowText (std::stringstream& s)
 	{
 		s << "\n";
 		s << "Status: ";
-		switch (i2p::context.GetStatus())
+		ShowNetworkStatus (s, i2p::context.GetStatus ());
+		if (i2p::context.SupportsV6 ())
 		{
-			case eRouterStatusOK: s << "OK"; break;
-			case eRouterStatusTesting: s << "Testing"; break;
-			case eRouterStatusFirewalled: s << "Firewalled"; break;
-			case eRouterStatusError:
-			{
-				switch (i2p::context.GetError())
-				{
-					case eRouterErrorClockSkew: s << "Clock skew"; break;
-					default: s << "Error";
-				}
-				break;
-			}
-			default: s << "Unknown";
+			s << " / ";
+			ShowNetworkStatus (s, i2p::context.GetStatusV6 ());
 		}
 		s << "; ";
 		s << "Success Rate: " << i2p::tunnel::tunnels.GetTunnelCreationSuccessRate() << "%\n";
 		s << "Uptime: "; ShowUptime(s, i2p::context.GetUptime ());
-		if (GracefulShutdownEndtime != 0)
+		if (g_GracefulShutdownEndtime != 0)
 		{
-			DWORD GracefulTimeLeft = (GracefulShutdownEndtime - GetTickCountLocal()) / 1000;
+			DWORD GracefulTimeLeft = (g_GracefulShutdownEndtime - GetTickCount()) / 1000;
 			s << "Graceful shutdown, time left: "; ShowUptime(s, GracefulTimeLeft);
 		}
 		else
@@ -198,7 +220,7 @@ namespace win32
 			case WM_CREATE:
 			{
 				s_uTaskbarRestart = RegisterWindowMessage(TEXT("TaskbarCreated"));
-				AddTrayIcon (hWnd);
+				AddTrayIcon (hWnd, true);
 				break;
 			}
 			case WM_CLOSE:
@@ -247,7 +269,7 @@ namespace win32
 						i2p::context.SetAcceptsTunnels (false);
 						SetTimer (hWnd, IDT_GRACEFUL_SHUTDOWN_TIMER, 10*60*1000, nullptr); // 10 minutes
 						SetTimer (hWnd, IDT_GRACEFUL_TUNNELCHECK_TIMER, 1000, nullptr); // check tunnels every second
-						GracefulShutdownEndtime = GetTickCountLocal() + 10*60*1000;
+						g_GracefulShutdownEndtime = GetTickCount() + 10*60*1000;
 						i2p::util::DaemonWin32::Instance ().isGraceful = true;
 						return 0;
 					}
@@ -256,7 +278,7 @@ namespace win32
 						i2p::context.SetAcceptsTunnels (true);
 						KillTimer (hWnd, IDT_GRACEFUL_SHUTDOWN_TIMER);
 						KillTimer (hWnd, IDT_GRACEFUL_TUNNELCHECK_TIMER);
-						GracefulShutdownEndtime = 0;
+						g_GracefulShutdownEndtime = 0;
 						i2p::util::DaemonWin32::Instance ().isGraceful = false;
 						return 0;
 					}
@@ -281,6 +303,12 @@ namespace win32
 					{
 						ShowWindow(hWnd, SW_SHOW);
 						SetTimer(hWnd, FRAME_UPDATE_TIMER, 3000, NULL);
+						return 0;
+					}
+					case ID_DATADIR:
+					{
+						std::string datadir(i2p::fs::GetUTF8DataDir());
+						ShellExecute(NULL, "explore", datadir.c_str(), NULL, NULL, SW_SHOWNORMAL);
 						return 0;
 					}
 				}
@@ -343,7 +371,7 @@ namespace win32
 				{
 					case IDT_GRACEFUL_SHUTDOWN_TIMER:
 					{
-						GracefulShutdownEndtime = 0;
+						g_GracefulShutdownEndtime = 0;
 						PostMessage (hWnd, WM_CLOSE, 0, 0); // exit
 						return 0;
 					}
@@ -383,7 +411,7 @@ namespace win32
 			default:
 			{
 				if (uMsg == s_uTaskbarRestart)
-					AddTrayIcon (hWnd);
+					AddTrayIcon (hWnd, false);
 				break;
 			}
 		}

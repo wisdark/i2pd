@@ -1,7 +1,7 @@
 %define git_hash %(git rev-parse HEAD | cut -c -7)
 
 Name:          i2pd-git
-Version:       2.32.1
+Version:       2.39.0
 Release:       git%{git_hash}%{?dist}
 Summary:       I2P router written in C++
 Conflicts:     i2pd
@@ -56,17 +56,39 @@ cd build
 %endif
 %endif
 
-%if 0%{?mageia} > 7
-pushd build
-make %{?_smp_mflags}
-popd
+
+%if 0%{?fedora} >= 35
+pushd redhat-linux-build
 %else
-make %{?_smp_mflags}
+%if 0%{?fedora} >= 33
+pushd %{_target_platform}
+%endif
 %endif
 
+%if 0%{?mageia} > 7
+pushd build
+%endif
+
+make %{?_smp_mflags}
+
+%if 0%{?fedora} >= 33
+popd
+%endif
+
+%if 0%{?mageia} > 7
+popd
+%endif
 
 %install
 pushd build
+
+%if 0%{?fedora} >= 35
+pushd redhat-linux-build
+%else
+%if 0%{?fedora} >= 33
+pushd %{_target_platform}
+%endif
+%endif
 
 %if 0%{?mageia}
 pushd build
@@ -124,6 +146,31 @@ getent passwd i2pd >/dev/null || \
 
 
 %changelog
+* Mon Aug 24 2021 r4sas <r4sas@i2pmail.org> - 2.39.0-2
+- changed if statements to cover fedora 35
+
+* Mon Aug 23 2021 orignal <i2porignal@yandex.ru> - 2.39.0
+- update to 2.39.0
+- fixed build on fedora 36
+
+* Mon May 17 2021 orignal <i2porignal@yandex.ru> - 2.38.0
+- update to 2.38.0
+
+* Mon Mar 15 2021 orignal <i2porignal@yandex.ru> - 2.37.0
+- update to 2.37.0
+
+* Mon Feb 15 2021 orignal <i2porignal@yandex.ru> - 2.36.0
+- update to 2.36.0
+
+* Mon Nov 30 2020 orignal <i2porignal@yandex.ru> - 2.35.0
+- update to 2.35.0
+
+* Tue Oct 27 2020 orignal <i2porignal@yandex.ru> - 2.34.0
+- update to 2.34.0
+
+* Mon Aug 24 2020 orignal <i2porignal@yandex.ru> - 2.33.0
+- update to 2.33.0
+
 * Tue Jun 02 2020 r4sas <r4sas@i2pmail.org> - 2.32.1
 - update to 2.32.1
 

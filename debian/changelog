@@ -1,3 +1,45 @@
+i2pd (2.39.0-1) unstable; urgency=medium
+
+  * updated to version 2.39.0/0.9.51
+
+ -- orignal <orignal@i2pmail.org>  Mon, 23 Aug 2021 16:00:00 +0000
+
+i2pd (2.38.0-1) unstable; urgency=medium
+
+  * updated to version 2.38.0/0.9.50
+
+ -- orignal <orignal@i2pmail.org>  Mon, 17 May 2021 16:00:00 +0000
+
+i2pd (2.37.0-1) unstable; urgency=medium
+
+  * updated to version 2.37.0
+
+ -- orignal <orignal@i2pmail.org>  Mon, 15 Mar 2021 16:00:00 +0000
+
+i2pd (2.36.0-1) unstable; urgency=high
+
+  * updated to version 2.36.0/0.9.49
+
+ -- orignal <orignal@i2pmail.org>  Mon, 15 Feb 2021 16:00:00 +0000
+
+i2pd (2.35.0-1) unstable; urgency=high
+
+  * updated to version 2.35.0/0.9.48
+
+ -- orignal <orignal@i2pmail.org>  Mon, 30 Nov 2020 16:00:00 +0000
+
+i2pd (2.34.0-1) unstable; urgency=medium
+
+  * updated to version 2.34.0
+
+ -- orignal <orignal@i2pmail.org>  Tue, 27 Oct 2020 16:00:00 +0000
+
+i2pd (2.33.0-1) unstable; urgency=medium
+
+  * updated to version 2.33.0/0.9.47
+
+ -- orignal <orignal@i2pmail.org>  Mon, 24 Aug 2020 16:00:00 +0000
+
 i2pd (2.32.1-1) unstable; urgency=high
 
   * updated to version 2.32.1

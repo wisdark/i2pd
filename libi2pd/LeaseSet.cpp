@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2020, The PurpleI2P Project
+* Copyright (c) 2013-2021, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -72,6 +72,12 @@ namespace data
 		}
 		size += 256; // encryption key
 		size += m_Identity->GetSigningPublicKeyLen (); // unused signing key
+		if (size + 1 > m_BufferLen)
+		{
+			LogPrint (eLogError, "LeaseSet: ", size, " exceeds buffer size ", m_BufferLen);
+			m_IsValid = false;
+			return;
+		}	
 		uint8_t num = m_Buffer[size];
 		size++; // num
 		LogPrint (eLogDebug, "LeaseSet: read num=", (int)num);
@@ -81,9 +87,14 @@ namespace data
 			m_IsValid = false;
 			return;
 		}
-
+		if (size + num*LEASE_SIZE > m_BufferLen) 
+		{	
+			LogPrint (eLogError, "LeaseSet: ", size, " exceeds buffer size ", m_BufferLen);
+			m_IsValid = false;
+			return;
+		}	
+		
 		UpdateLeasesBegin ();
-
 		// process leases
 		m_ExpirationTime = 0;
 		auto ts = i2p::util::GetMillisecondsSinceEpoch ();
@@ -106,14 +117,22 @@ namespace data
 			return;
 		}
 		m_ExpirationTime += LEASE_ENDDATE_THRESHOLD;
-
 		UpdateLeasesEnd ();
 
 		// verify
-		if (verifySignature && !m_Identity->Verify (m_Buffer, leases - m_Buffer, leases))
-		{
-			LogPrint (eLogWarning, "LeaseSet: verification failed");
-			m_IsValid = false;
+		if (verifySignature)
+		{	
+			auto signedSize = leases - m_Buffer;
+			if (signedSize + m_Identity->GetSignatureLen () > m_BufferLen)
+			{
+				LogPrint (eLogError, "LeaseSet: Signature exceeds buffer size ", m_BufferLen);
+				m_IsValid = false;
+			}	
+			else if (!m_Identity->Verify (m_Buffer, signedSize, leases))
+			{
+				LogPrint (eLogWarning, "LeaseSet: verification failed");
+				m_IsValid = false;
+			}
 		}
 	}
 
@@ -235,12 +254,12 @@ namespace data
 		return ts > m_ExpirationTime;
 	}
 
-	void LeaseSet::Encrypt (const uint8_t * data, uint8_t * encrypted, BN_CTX * ctx) const
+	void LeaseSet::Encrypt (const uint8_t * data, uint8_t * encrypted) const
 	{
 		if (!m_EncryptionKey) return;
 		auto encryptor = m_Identity->CreateEncryptor (m_EncryptionKey);
 		if (encryptor)
-			encryptor->Encrypt (data, encrypted, ctx, true);
+			encryptor->Encrypt (data, encrypted);
 	}
 
 	void LeaseSet::SetBuffer (const uint8_t * buf, size_t len)
@@ -639,11 +658,11 @@ namespace data
 		return offset - 1;
 	}
 
-	void LeaseSet2::Encrypt (const uint8_t * data, uint8_t * encrypted, BN_CTX * ctx) const
+	void LeaseSet2::Encrypt (const uint8_t * data, uint8_t * encrypted) const
 	{
 		auto encryptor = m_Encryptor; // TODO: atomic
 		if (encryptor)
-			encryptor->Encrypt (data, encrypted, ctx, true);
+			encryptor->Encrypt (data, encrypted);
 	}
 
 	uint64_t LeaseSet2::ExtractExpirationTimestamp (const uint8_t * buf, size_t len) const
@@ -778,7 +797,7 @@ namespace data
 	}
 
 	LocalLeaseSet2::LocalLeaseSet2 (uint8_t storeType, const i2p::data::PrivateKeys& keys,
-		const KeySections& encryptionKeys, std::vector<std::shared_ptr<i2p::tunnel::InboundTunnel> > tunnels,
+		const KeySections& encryptionKeys, const std::vector<std::shared_ptr<i2p::tunnel::InboundTunnel> >& tunnels,
 		bool isPublic, bool isPublishedEncrypted):
 		LocalLeaseSet (keys.GetPublic (), nullptr, 0)
 	{
@@ -843,9 +862,18 @@ namespace data
 			offset += 4; // end date
 		}
 		// update expiration
-		SetExpirationTime (expirationTime*1000LL);
-		auto expires = expirationTime - timestamp;
-		htobe16buf (expiresBuf, expires > 0 ? expires : 0);
+		if (expirationTime)
+		{		
+			SetExpirationTime (expirationTime*1000LL);
+			auto expires = (int)expirationTime - timestamp;
+			htobe16buf (expiresBuf, expires > 0 ? expires : 0);
+		}	
+		else
+		{
+			// no tunnels or withdraw
+			SetExpirationTime (timestamp*1000LL);
+			memset (expiresBuf, 0, 2); // expires immeditely
+		}		
 		// sign
 		keys.Sign (m_Buffer, offset, m_Buffer + offset); // LS + leading store type
 	}
@@ -884,6 +912,11 @@ namespace data
 		uint8_t blindedPriv[64], blindedPub[128]; // 64 and 128 max
 		size_t publicKeyLen = blindedKey.BlindPrivateKey (keys.GetSigningPrivateKey (), date, blindedPriv, blindedPub);
 		std::unique_ptr<i2p::crypto::Signer> blindedSigner (i2p::data::PrivateKeys::CreateSigner (blindedKey.GetBlindedSigType (), blindedPriv));
+		if (!blindedSigner)
+		{
+			LogPrint (eLogError, "LeaseSet2: Can't create blinded signer for signature type ", blindedKey.GetSigType ());
+			return;
+		}	
 		auto offset = 1;
 		htobe16buf (m_Buffer + offset, blindedKey.GetBlindedSigType ()); offset += 2; // Blinded Public Key Sig Type
 		memcpy (m_Buffer + offset, blindedPub, publicKeyLen); offset += publicKeyLen; // Blinded Public Key

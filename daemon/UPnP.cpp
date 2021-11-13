@@ -1,18 +1,9 @@
-/*
-* Copyright (c) 2013-2020, The PurpleI2P Project
-*
-* This file is part of Purple i2pd project and licensed under BSD3
-*
-* See full license text in LICENSE file at top of project tree
-*/
-
 #ifdef USE_UPNP
 #include <string>
 #include <thread>
 
 #include <boost/thread/thread.hpp>
 #include <boost/asio.hpp>
-#include <boost/bind.hpp>
 
 #include "Log.h"
 
@@ -69,6 +60,8 @@ namespace transport
 
 	void UPnP::Run ()
 	{
+		i2p::util::SetThreadName("UPnP");
+
 		while (m_IsRunning)
 		{
 			try
@@ -100,7 +93,7 @@ namespace transport
 #endif
 
 		isError = err != UPNPDISCOVER_SUCCESS;
-#else // MINIUPNPC_API_VERSION >= 8
+#else  // MINIUPNPC_API_VERSION >= 8
 		err = 0;
 		m_Devlist = upnpDiscover (UPNP_RESPONSE_TIMEOUT, NULL, NULL, 0);
 		isError = m_Devlist == NULL;
@@ -118,7 +111,7 @@ namespace transport
 		}
 
 		err = UPNP_GetValidIGD (m_Devlist, &m_upnpUrls, &m_upnpData, m_NetworkAddr, sizeof (m_NetworkAddr));
-		m_upnpUrlsInitialized = err != 0;
+		m_upnpUrlsInitialized=err!=0;
 		if (err == UPNP_IGD_VALID_CONNECTED)
 		{
 			err = UPNP_GetExternalIPAddress (m_upnpUrls.controlURL, m_upnpData.first.servicetype, m_externalIPAddress);
@@ -232,7 +225,7 @@ namespace transport
 		}
 		std::string strType (GetProto (address)), strPort (std::to_string (address->port));
 		int err = UPNPCOMMAND_SUCCESS;
-
+		
 		err = CheckMapping (strPort.c_str (), strType.c_str ());
 		if (err == UPNPCOMMAND_SUCCESS)
 		{

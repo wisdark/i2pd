@@ -19,6 +19,7 @@
 #include "Identity.h"
 #include "Config.h"
 #include "version.h"
+#include "Log.h"
 
 using namespace boost::program_options;
 
@@ -36,6 +37,7 @@ namespace config {
 			("conf", value<std::string>()->default_value(""),                 "Path to main i2pd config file (default: try ~/.i2pd/i2pd.conf or /var/lib/i2pd/i2pd.conf)")
 			("tunconf", value<std::string>()->default_value(""),              "Path to config with tunnels list and options (default: try ~/.i2pd/tunnels.conf or /var/lib/i2pd/tunnels.conf)")
 			("tunnelsdir", value<std::string>()->default_value(""),           "Path to extra tunnels' configs folder (default: ~/.i2pd/tunnels.d or /var/lib/i2pd/tunnels.d")
+			("certsdir", value<std::string>()->default_value(""),             "Path to certificates used for verifying .su3, families (default: ~/.i2pd/certificates or /var/lib/i2pd/certificates")
 			("pidfile", value<std::string>()->default_value(""),              "Path to pidfile (default: ~/i2pd/i2pd.pid or /var/lib/i2pd/i2pd.pid)")
 			("log", value<std::string>()->default_value(""),                  "Logs destination: stdout, file, syslog (stdout if not set)")
 			("logfile", value<std::string>()->default_value(""),              "Path to logfile (stdout if not set, autodetect if daemon)")
@@ -47,10 +49,13 @@ namespace config {
 			("ifname", value<std::string>()->default_value(""),               "Network interface to bind to")
 			("ifname4", value<std::string>()->default_value(""),              "Network interface to bind to for ipv4")
 			("ifname6", value<std::string>()->default_value(""),              "Network interface to bind to for ipv6")
-			("nat", value<bool>()->default_value(true),                       "Should we assume we are behind NAT? (default: enabled)")
+			("nat", bool_switch()->default_value(true),                       "Should we assume we are behind NAT? (default: enabled)")
 			("port", value<uint16_t>()->default_value(0),                     "Port to listen for incoming connections (default: auto)")
-			("ipv4", value<bool>()->default_value(true),                      "Enable communication through ipv4 (default: enabled)")
+			("ipv4", bool_switch()->default_value(true),                      "Enable communication through ipv4 (default: enabled)")
+			("address4", value<std::string>()->default_value(""),             "Local address to bind ipv4 transport sockets to")
 			("ipv6", bool_switch()->default_value(false),                     "Enable communication through ipv6 (default: disabled)")
+			("address6", value<std::string>()->default_value(""),             "Local address to bind ipv6 transport sockets to")
+			("reservedrange", bool_switch()->default_value(true),             "Check remote RI for being in blacklist of reserved IP ranges (default: enabled)")
 			("netid", value<int>()->default_value(I2PD_NET_ID),               "Specify NetID. Main I2P is 2")
 			("daemon", bool_switch()->default_value(false),                   "Router will go to background after start (default: disabled)")
 			("service", bool_switch()->default_value(false),                  "Router will use system folders like '/var/lib/i2pd' (default: disabled)")
@@ -58,11 +63,11 @@ namespace config {
 			("floodfill", bool_switch()->default_value(false),                "Router will be floodfill (default: disabled)")
 			("bandwidth", value<std::string>()->default_value(""),            "Bandwidth limit: integer in KBps or letters: L (32), O (256), P (2048), X (>9000)")
 			("share", value<int>()->default_value(100),                       "Limit of transit traffic from max bandwidth in percents. (default: 100)")
-			("ntcp", value<bool>()->default_value(false),                     "Enable NTCP transport (default: disabled)")
-			("ssu", value<bool>()->default_value(true),                       "Enable SSU transport (default: enabled)")
-			("ntcpproxy", value<std::string>()->default_value(""),            "Proxy URL for NTCP transport")
+			("ntcp", bool_switch()->default_value(false),                     "Ignored. Always false")
+			("ssu", bool_switch()->default_value(true),                       "Enable SSU transport (default: enabled)")
+			("ntcpproxy", value<std::string>()->default_value(""),            "Ignored")
 #ifdef _WIN32
-			("svcctl", value<std::string>()->default_value(""),               "Windows service management ('install' or 'remove')")
+			("svcctl", value<std::string>()->default_value(""),               "Ignored")
 			("insomnia", bool_switch()->default_value(false),                 "Prevent system from sleeping (default: disabled)")
 			("close", value<std::string>()->default_value("ask"),             "Action on close: minimize, exit, ask")
 #endif
@@ -89,6 +94,7 @@ namespace config {
 			("http.strictheaders", value<bool>()->default_value(true),          "Enable strict host checking on WebUI")
 			("http.hostname", value<std::string>()->default_value("localhost"), "Expected hostname for WebUI")
 			("http.webroot", value<std::string>()->default_value("/"),          "WebUI root path (default: / )")
+			("http.lang", value<std::string>()->default_value("english"),       "WebUI language (default: english )")
 		;
 
 		options_description httpproxy("HTTP Proxy options");
@@ -96,7 +102,7 @@ namespace config {
 			("httpproxy.enabled", value<bool>()->default_value(true),                 "Enable or disable HTTP Proxy")
 			("httpproxy.address", value<std::string>()->default_value("127.0.0.1"),   "HTTP Proxy listen address")
 			("httpproxy.port", value<uint16_t>()->default_value(4444),                "HTTP Proxy listen port")
-			("httpproxy.keys", value<std::string>()->default_value(""),               "File to persist HTTP Proxy keys")
+			("httpproxy.keys", value<std::string>()->default_value("transient-proxy"), "File to persist HTTP Proxy keys. Transient by default")
 			("httpproxy.signaturetype", value<i2p::data::SigningKeyType>()->
 				default_value(i2p::data::SIGNING_KEY_TYPE_EDDSA_SHA512_ED25519),      "Signature type for new keys. 7 (EdDSA) by default")
 			("httpproxy.inbound.length", value<std::string>()->default_value("3"),    "HTTP proxy inbound tunnel length")
@@ -107,8 +113,9 @@ namespace config {
 			("httpproxy.latency.max", value<std::string>()->default_value("0"),       "HTTP proxy max latency for tunnels")
 			("httpproxy.outproxy", value<std::string>()->default_value(""),           "HTTP proxy upstream out proxy url")
 			("httpproxy.addresshelper", value<bool>()->default_value(true),           "Enable or disable addresshelper")
-			("httpproxy.i2cp.leaseSetType", value<std::string>()->default_value("1"), "Local destination's LeaseSet type")
-			("httpproxy.i2cp.leaseSetEncType", value<std::string>()->default_value("0"), "Local destination's LeaseSet encryption type")
+			("httpproxy.i2cp.leaseSetType", value<std::string>()->default_value("3"), "Local destination's LeaseSet type")
+			("httpproxy.i2cp.leaseSetEncType", value<std::string>()->default_value("0,4"), "Local destination's LeaseSet encryption type")
+			("httpproxy.i2cp.leaseSetPrivKey", value<std::string>()->default_value(""), "LeaseSet private key")
 		;
 
 		options_description socksproxy("SOCKS Proxy options");
@@ -116,7 +123,7 @@ namespace config {
 			("socksproxy.enabled", value<bool>()->default_value(true),                 "Enable or disable SOCKS Proxy")
 			("socksproxy.address", value<std::string>()->default_value("127.0.0.1"),   "SOCKS Proxy listen address")
 			("socksproxy.port", value<uint16_t>()->default_value(4447),                "SOCKS Proxy listen port")
-			("socksproxy.keys", value<std::string>()->default_value(""),               "File to persist SOCKS Proxy keys")
+			("socksproxy.keys", value<std::string>()->default_value("transient-proxy"), "File to persist SOCKS Proxy keys. Transient by default")
 			("socksproxy.signaturetype", value<i2p::data::SigningKeyType>()->
 				default_value(i2p::data::SIGNING_KEY_TYPE_EDDSA_SHA512_ED25519),       "Signature type for new keys. 7 (EdDSA) by default")
 			("socksproxy.inbound.length", value<std::string>()->default_value("3"),    "SOCKS proxy inbound tunnel length")
@@ -128,8 +135,9 @@ namespace config {
 			("socksproxy.outproxy.enabled", value<bool>()->default_value(false),       "Enable or disable SOCKS outproxy")
 			("socksproxy.outproxy", value<std::string>()->default_value("127.0.0.1"),  "Upstream outproxy address for SOCKS Proxy")
 			("socksproxy.outproxyport", value<uint16_t>()->default_value(9050),        "Upstream outproxy port for SOCKS Proxy")
-			("socksproxy.i2cp.leaseSetType", value<std::string>()->default_value("1"), "Local destination's LeaseSet type")
-			("socksproxy.i2cp.leaseSetEncType", value<std::string>()->default_value("0"), "Local destination's LeaseSet encryption type")
+			("socksproxy.i2cp.leaseSetType", value<std::string>()->default_value("3"), "Local destination's LeaseSet type")
+			("socksproxy.i2cp.leaseSetEncType", value<std::string>()->default_value("0,4"), "Local destination's LeaseSet encryption type")
+			("socksproxy.i2cp.leaseSetPrivKey", value<std::string>()->default_value(""), "LeaseSet private key")
 		;
 
 		options_description sam("SAM bridge options");
@@ -152,6 +160,7 @@ namespace config {
 			("i2cp.enabled", value<bool>()->default_value(false),              "Enable or disable I2CP")
 			("i2cp.address", value<std::string>()->default_value("127.0.0.1"), "I2CP listen address")
 			("i2cp.port", value<uint16_t>()->default_value(7654),              "I2CP listen port")
+			("i2cp.singlethread", value<bool>()->default_value(true),          "Destinations run in the I2CP server's thread")
 		;
 
 		options_description i2pcontrol("I2PControl options");
@@ -195,28 +204,33 @@ namespace config {
 			("reseed.proxy", value<std::string>()->default_value(""),     "url for reseed proxy, supports http/socks")
 			("reseed.urls", value<std::string>()->default_value(
 				"https://reseed.i2p-projekt.de/,"
-				"https://i2p.mooo.com/netDb/,"
-				"https://reseed.i2p2.no/,"
+				"https://reseed.diva.exchange/,"
 				"https://reseed-fr.i2pd.xyz/,"
 				"https://reseed.memcpy.io/,"
 				"https://reseed.onion.im/,"
 				"https://i2pseed.creativecowpat.net:8443/,"
-			    "https://reseed.i2pgit.org/,"                                                				
+				"https://reseed.i2pgit.org/,"
 				"https://i2p.novg.net/"
 			),                                                            "Reseed URLs, separated by comma")
+			("reseed.yggurls", value<std::string>()->default_value(
+				"http://[324:71e:281a:9ed3::ace]:7070/,"
+			    "http://[301:65b9:c7cd:9a36::1]:18801/,"
+			    "http://[320:8936:ec1a:31f1::216]/"
+			),                                                            "Reseed URLs through the Yggdrasil, separated by comma")
 		;
 
 		options_description addressbook("AddressBook options");
 		addressbook.add_options()
 			("addressbook.defaulturl", value<std::string>()->default_value(
-				"http://joajgazyztfssty4w2on5oaqksz6tqoxbduy553y34mf4byv6gpq.b32.i2p/export/alive-hosts.txt"
+				"http://shx5vqsw7usdaunyzr2qmes2fq37oumybpudrd4jjj4e4vk4uusa.b32.i2p/hosts.txt"
 			),                                                                     "AddressBook subscription URL for initial setup")
-			("addressbook.subscriptions", value<std::string>()->default_value(""), "AddressBook subscriptions URLs, separated by comma");
+			("addressbook.subscriptions", value<std::string>()->default_value("http://reg.i2p/hosts.txt"), "AddressBook subscriptions URLs, separated by comma")
+			("addressbook.hostsfile", value<std::string>()->default_value(""),     "File to dump addresses in hosts.txt format");
 
 		options_description trust("Trust options");
 		trust.add_options()
 			("trust.enabled", value<bool>()->default_value(false),     "Enable explicit trust options")
-			("trust.family", value<std::string>()->default_value(""),  "Router Familiy to trust for first hops")
+			("trust.family", value<std::string>()->default_value(""),  "Router Family to trust for first hops")
 			("trust.routers", value<std::string>()->default_value(""), "Only Connect to these routers")
 			("trust.hidden", value<bool>()->default_value(false),      "Should we hide our router from other routers?")
 		;
@@ -242,7 +256,7 @@ namespace config {
 			("ntcp2.enabled", value<bool>()->default_value(true),          "Enable NTCP2 (default: enabled)")
 			("ntcp2.published", value<bool>()->default_value(true),        "Publish NTCP2 (default: enabled)")
 			("ntcp2.port", value<uint16_t>()->default_value(0),            "Port to listen for incoming NTCP2 connections (default: auto)")
-			("ntcp2.addressv6", value<std::string>()->default_value("::"), "Address to bind NTCP2 on")
+			("ntcp2.addressv6", value<std::string>()->default_value("::"), "Address to publish NTCP2 with")
 			("ntcp2.proxy", value<std::string>()->default_value(""),       "Proxy URL for NTCP2 transport")
 		;
 
@@ -262,6 +276,19 @@ namespace config {
 		persist.add_options()
 			("persist.profiles", value<bool>()->default_value(true),       "Persist peer profiles (default: true)")
 			("persist.addressbook", value<bool>()->default_value(true),    "Persist full addresses (default: true)")
+		;
+
+		options_description cpuext("CPU encryption extensions options");
+		cpuext.add_options()
+			("cpuext.aesni", bool_switch()->default_value(true),                     "Use auto detection for AESNI CPU extensions. If false, AESNI will be not used")
+			("cpuext.avx", bool_switch()->default_value(true),                       "Use auto detection for AVX CPU extensions. If false, AVX will be not used")
+			("cpuext.force", bool_switch()->default_value(false),                    "Force usage of CPU extensions. Useful when cpuinfo is not available on virtual machines")
+		;
+
+		options_description meshnets("Meshnet transports options");
+		meshnets.add_options()
+			("meshnets.yggdrasil", bool_switch()->default_value(false),              "Support transports through the Yggdrasil (default: false)")
+			("meshnets.yggaddress", value<std::string>()->default_value(""),         "Yggdrasil address to publish")
 		;
 
 		m_OptionsDesc
@@ -284,6 +311,8 @@ namespace config {
 			.add(ntcp2)
 			.add(nettime)
 			.add(persist)
+			.add(cpuext)
+			.add(meshnets)
 		;
 	}
 
@@ -292,7 +321,7 @@ namespace config {
 		try
 		{
 			auto style = boost::program_options::command_line_style::unix_style
-				| boost::program_options::command_line_style::allow_long_disguise;
+			           | boost::program_options::command_line_style::allow_long_disguise;
 			style &=   ~ boost::program_options::command_line_style::allow_guessing;
 			if (ignoreUnknown)
 				store(command_line_parser(argc, argv).options(m_OptionsDesc).style (style).allow_unregistered().run(), m_Options);
@@ -301,6 +330,7 @@ namespace config {
 		}
 		catch (boost::program_options::error& e)
 		{
+			ThrowFatal ("Error while parsing arguments: ", e.what());
 			std::cerr << "args: " << e.what() << std::endl;
 			exit(EXIT_FAILURE);
 		}
@@ -338,6 +368,7 @@ namespace config {
 
 		if (!config.is_open())
 		{
+			ThrowFatal ("Missing or unreadable config file: ", path);
 			std::cerr << "missing/unreadable config file: " << path << std::endl;
 			exit(EXIT_FAILURE);
 		}
@@ -348,6 +379,7 @@ namespace config {
 		}
 		catch (boost::program_options::error& e)
 		{
+			ThrowFatal ("Error while parsing config file: ", e.what());
 			std::cerr << e.what() << std::endl;
 			exit(EXIT_FAILURE);
 		};

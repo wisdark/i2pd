@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2020, The PurpleI2P Project
+* Copyright (c) 2013-2021, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -28,20 +28,24 @@
 #include "I2PTunnel.h"
 #include "Config.h"
 #include "HTTP.h"
+#include "I18N.h"
 
 namespace i2p {
 namespace proxy {
 	std::map<std::string, std::string> jumpservices = {
-		{ "inr.i2p",    "http://joajgazyztfssty4w2on5oaqksz6tqoxbduy553y34mf4byv6gpq.b32.i2p/search/?q=" },
-		{ "stats.i2p",  "http://7tbay5p4kzeekxvyvbf6v7eauazemsnnl2aoyqhg5jzpr5eke7tq.b32.i2p/cgi-bin/jump.cgi?a=" },
+		{ "reg.i2p",       "http://shx5vqsw7usdaunyzr2qmes2fq37oumybpudrd4jjj4e4vk4uusa.b32.i2p/jump/" },
+		{ "identiguy.i2p", "http://3mzmrus2oron5fxptw7hw2puho3bnqmw2hqy7nw64dsrrjwdilva.b32.i2p/cgi-bin/query?hostname=" },
+		{ "stats.i2p",     "http://7tbay5p4kzeekxvyvbf6v7eauazemsnnl2aoyqhg5jzpr5eke7tq.b32.i2p/cgi-bin/jump.cgi?a=" },
 	};
 
 	static const char *pageHead =
 		"<head>\r\n"
+		"  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\r\n"
 		"  <title>I2Pd HTTP proxy</title>\r\n"
 		"  <style type=\"text/css\">\r\n"
 		"    body { font: 100%/1.5em sans-serif; margin: 0; padding: 1.5em; background: #FAFAFA; color: #103456; }\r\n"
-		"    .header { font-size: 2.5em; text-align: center; margin: 1.5em 0; color: #894C84; }\r\n"
+		"    h1 { font-size: 1.7em; color: #894C84; }\r\n"
+		"    @media screen and (max-width: 980px) { h1 { font-size: 1.7em; text-align: center; color: #894C84; }}\r\n"
 		"  </style>\r\n"
 		"</head>\r\n"
 	;
@@ -68,8 +72,8 @@ namespace proxy {
 			void SentHTTPFailed(const boost::system::error_code & ecode);
 			void HandleStreamRequestComplete (std::shared_ptr<i2p::stream::Stream> stream);
 			/* error helpers */
-			void GenericProxyError(const char *title, const char *description);
-			void GenericProxyInfo(const char *title, const char *description);
+			void GenericProxyError(const std::string& title, const std::string& description);
+			void GenericProxyInfo(const std::string& title, const std::string& description);
 			void HostNotFound(std::string & host);
 			void SendProxyError(std::string & content);
 
@@ -148,17 +152,17 @@ namespace proxy {
 		Done(shared_from_this());
 	}
 
-	void HTTPReqHandler::GenericProxyError(const char *title, const char *description) {
+	void HTTPReqHandler::GenericProxyError(const std::string& title, const std::string& description) {
 		std::stringstream ss;
-		ss << "<h1>Proxy error: " << title << "</h1>\r\n";
+		ss << "<h1>" << tr("Proxy error") << ": " << title << "</h1>\r\n";
 		ss << "<p>" << description << "</p>\r\n";
 		std::string content = ss.str();
 		SendProxyError(content);
 	}
 
-	void HTTPReqHandler::GenericProxyInfo(const char *title, const char *description) {
+	void HTTPReqHandler::GenericProxyInfo(const std::string& title, const std::string& description) {
 		std::stringstream ss;
-		ss << "<h1>Proxy info: " << title << "</h1>\r\n";
+		ss << "<h1>" << tr("Proxy info") << ": " << title << "</h1>\r\n";
 		ss << "<p>" << description << "</p>\r\n";
 		std::string content = ss.str();
 		SendProxyError(content);
@@ -166,9 +170,9 @@ namespace proxy {
 
 	void HTTPReqHandler::HostNotFound(std::string & host) {
 		std::stringstream ss;
-		ss << "<h1>Proxy error: Host not found</h1>\r\n"
-		   << "<p>Remote host not found in router's addressbook</p>\r\n"
-		   << "<p>You may try to find this host on jump services below:</p>\r\n"
+		ss << "<h1>" << tr("Proxy error: Host not found") << "</h1>\r\n"
+		   << "<p>" << tr("Remote host not found in router's addressbook") << "</p>\r\n"
+		   << "<p>" << tr("You may try to find this host on jump services below") << ":</p>\r\n"
 		   << "<ul>\r\n";
 		for (const auto& js : jumpservices) {
 			ss << "  <li><a href=\"" << js.second << host << "\">" << js.first << "</a></li>\r\n";
@@ -213,6 +217,7 @@ namespace proxy {
 		b64 = i2p::http::UrlDecode(value);
 		// if we need update exists, request formed with update param
 		if (params["update"] == "true") { len += std::strlen("&update=true"); confirm = true; }
+		if (pos != 0 && url.query[pos-1] == '&') { pos--; len++; } // if helper is not only one query option
 		url.query.replace(pos, len, "");
 		return true;
 	}
@@ -265,7 +270,7 @@ namespace proxy {
 
 		if (m_req_len < 0) {
 			LogPrint(eLogError, "HTTPProxy: unable to parse request");
-			GenericProxyError("Invalid request", "Proxy unable to parse your request");
+			GenericProxyError(tr("Invalid request"), tr("Proxy unable to parse your request"));
 			return true; /* parse error */
 		}
 
@@ -280,7 +285,7 @@ namespace proxy {
 			if (!m_Addresshelper)
 			{
 				LogPrint(eLogWarning, "HTTPProxy: addresshelper request rejected");
-				GenericProxyError("Invalid request", "addresshelper is not supported");
+				GenericProxyError(tr("Invalid request"), tr("addresshelper is not supported"));
 				return true;
 			}
 			if (!i2p::client::context.GetAddressBook ().FindAddress (m_RequestURL.host) || m_Confirm)
@@ -289,17 +294,19 @@ namespace proxy {
 				LogPrint (eLogInfo, "HTTPProxy: added address from addresshelper for ", m_RequestURL.host);
 				std::string full_url = m_RequestURL.to_string();
 				std::stringstream ss;
-				ss << "Host " << m_RequestURL.host << " added to router's addressbook from helper. "
-				   << "Click <a href=\"" << full_url << "\">here</a> to proceed.";
-				GenericProxyInfo("Addresshelper found", ss.str().c_str());
+				ss << tr("Host") <<" " << m_RequestURL.host << " " << tr("added to router's addressbook from helper") << ". ";
+				ss << tr("Click here to proceed:") << " <a href=\"" << full_url << "\">" << tr("Continue") << "</a>.";
+				GenericProxyInfo(tr("Addresshelper found"), ss.str());
 				return true; /* request processed */
 			}
 			else
 			{
+				std::string full_url = m_RequestURL.to_string();
 				std::stringstream ss;
-				ss << "Host " << m_RequestURL.host << " <font color=red>already in router's addressbook</font>. "
-				   << "Click <a href=\"" << m_RequestURL.query << "?i2paddresshelper=" << jump << "&update=true\">here</a> to update record.";
-				GenericProxyInfo("Addresshelper found", ss.str().c_str());
+				ss << tr("Host") << " " << m_RequestURL.host << " <font color=red>" << tr("already in router's addressbook") << "</font>. ";
+				ss << tr("Click here to update record:") << " <a href=\"" << full_url << (full_url.find('?') != std::string::npos ? "&i2paddresshelper=" : "?i2paddresshelper=");
+				ss << jump << "&update=true\">" << tr("Continue") << "</a>.";
+				GenericProxyInfo(tr("Addresshelper found"), ss.str());
 				return true; /* request processed */
 			}
 		}
@@ -312,7 +319,7 @@ namespace proxy {
 			auto pos = uri.find(":");
 			if(pos == std::string::npos || pos == uri.size() - 1)
 			{
-				GenericProxyError("Invalid Request", "invalid request uri");
+				GenericProxyError(tr("Invalid request"), tr("invalid request uri"));
 				return true;
 			}
 			else
@@ -355,7 +362,7 @@ namespace proxy {
 				else
 				{
 					/* relative url and missing 'Host' header */
-					GenericProxyError("Invalid request", "Can't detect destination host from request");
+					GenericProxyError(tr("Invalid request"), tr("Can't detect destination host from request"));
 					return true;
 				}
 			}
@@ -372,11 +379,11 @@ namespace proxy {
 				if(m_ProxyURL.parse(m_OutproxyUrl))
 					ForwardToUpstreamProxy();
 				else
-					GenericProxyError("Outproxy failure", "bad outproxy settings");
+					GenericProxyError(tr("Outproxy failure"), tr("bad outproxy settings"));
 			} else {
 				LogPrint (eLogWarning, "HTTPProxy: outproxy failure for ", dest_host, ": no outproxy enabled");
-				std::string message = "Host " + dest_host + " not inside I2P network, but outproxy is not enabled";
-				GenericProxyError("Outproxy failure", message.c_str());
+				std::stringstream ss; ss << tr("Host") << " " << dest_host << " " << tr("not inside I2P network, but outproxy is not enabled");
+				GenericProxyError(tr("Outproxy failure"), ss.str());
 			}
 			return true;
 		}
@@ -430,13 +437,13 @@ namespace proxy {
 			if (m_ProxyURL.is_i2p())
 			{
 				m_ClientRequest.uri = origURI;
-				if (!m_ProxyURL.user.empty () || !m_ProxyURL.pass.empty ())
+				auto auth = i2p::http::CreateBasicAuthorizationString (m_ProxyURL.user, m_ProxyURL.pass);
+				if (!auth.empty ())
 				{
 					// remove existing authorization if any
 					m_ClientRequest.RemoveHeader("Proxy-");
 					// add own http proxy authorization
-					std::string s = "Basic " + i2p::data::ToBase64Standard (m_ProxyURL.user + ":" + m_ProxyURL.pass);
-					m_ClientRequest.AddHeader("Proxy-Authorization", s);
+					m_ClientRequest.AddHeader("Proxy-Authorization", auth);
 				}
 				m_send_buf = m_ClientRequest.to_string();
 				m_recv_buf.erase(0, m_req_len);
@@ -464,13 +471,13 @@ namespace proxy {
 		else
 		{
 			// unknown type, complain
-			GenericProxyError("unknown outproxy url", m_ProxyURL.to_string().c_str());
+			GenericProxyError(tr("unknown outproxy url"), m_ProxyURL.to_string());
 		}
 	}
 
 	void HTTPReqHandler::HandleUpstreamProxyResolved(const boost::system::error_code & ec, boost::asio::ip::tcp::resolver::iterator it, ProxyResolvedHandler handler)
 	{
-		if(ec) GenericProxyError("cannot resolve upstream proxy", ec.message().c_str());
+		if(ec) GenericProxyError(tr("cannot resolve upstream proxy"), ec.message());
 		else handler(*it);
 	}
 
@@ -478,7 +485,7 @@ namespace proxy {
 	{
 		if(!ec) {
 			if(m_RequestURL.host.size() > 255) {
-				GenericProxyError("hostname too long", m_RequestURL.host.c_str());
+				GenericProxyError(tr("hostname too long"), m_RequestURL.host);
 				return;
 			}
 			uint16_t port = m_RequestURL.port;
@@ -505,13 +512,13 @@ namespace proxy {
 			reqsize += host.size();
 			m_socks_buf[++reqsize] = 0;
 			boost::asio::async_write(*m_proxysock, boost::asio::buffer(m_socks_buf, reqsize), boost::asio::transfer_all(), std::bind(&HTTPReqHandler::HandleSocksProxySendHandshake, this, std::placeholders::_1, std::placeholders::_2));
-		} else GenericProxyError("cannot connect to upstream socks proxy", ec.message().c_str());
+		} else GenericProxyError(tr("cannot connect to upstream socks proxy"), ec.message());
 	}
 
 	void HTTPReqHandler::HandleSocksProxySendHandshake(const boost::system::error_code & ec, std::size_t bytes_transferred)
 	{
 		LogPrint(eLogDebug, "HTTPProxy: upstream socks handshake sent");
-		if(ec) GenericProxyError("Cannot negotiate with socks proxy", ec.message().c_str());
+		if(ec) GenericProxyError(tr("Cannot negotiate with socks proxy"), ec.message());
 		else m_proxysock->async_read_some(boost::asio::buffer(m_socks_buf, 8), std::bind(&HTTPReqHandler::HandleSocksProxyReply, this, std::placeholders::_1, std::placeholders::_2));
 	}
 
@@ -553,7 +560,7 @@ namespace proxy {
 		}
 		else
 		{
-			GenericProxyError("CONNECT error", "Failed to Connect");
+			GenericProxyError(tr("CONNECT error"), tr("Failed to Connect"));
 		}
 	}
 
@@ -564,7 +571,7 @@ namespace proxy {
 			m_send_buf = m_ClientResponse.to_string();
 			boost::asio::async_write(*m_sock, boost::asio::buffer(m_send_buf), boost::asio::transfer_all(), [&] (const boost::system::error_code & ec, std::size_t transferred)
 				{
-					if(ec) GenericProxyError("socks proxy error", ec.message().c_str());
+					if(ec) GenericProxyError(tr("socks proxy error"), ec.message());
 					else HandoverToUpstreamProxy();
 				});
 		} else {
@@ -572,7 +579,7 @@ namespace proxy {
 			LogPrint(eLogDebug, "HTTPProxy: send ", m_send_buf.size(), " bytes");
 			boost::asio::async_write(*m_proxysock, boost::asio::buffer(m_send_buf), boost::asio::transfer_all(), [&](const boost::system::error_code & ec, std::size_t transferred)
 				{
-					if(ec) GenericProxyError("failed to send request to upstream", ec.message().c_str());
+					if(ec) GenericProxyError(tr("failed to send request to upstream"), ec.message());
 					else HandoverToUpstreamProxy();
 				});
 		}
@@ -590,18 +597,18 @@ namespace proxy {
 				ss << "error code: ";
 				ss << (int) m_socks_buf[1];
 				std::string msg = ss.str();
-				GenericProxyError("Socks Proxy error", msg.c_str());
+				GenericProxyError(tr("socks proxy error"), msg);
 			}
 		}
-		else GenericProxyError("No Reply From socks proxy", ec.message().c_str());
+		else GenericProxyError(tr("No Reply From socks proxy"), ec.message());
 	}
 
 	void HTTPReqHandler::HandleUpstreamHTTPProxyConnect(const boost::system::error_code & ec)
 	{
 		if(!ec) {
 			LogPrint(eLogDebug, "HTTPProxy: connected to http upstream");
-			GenericProxyError("cannot connect", "http out proxy not implemented");
-		} else GenericProxyError("cannot connect to upstream http proxy", ec.message().c_str());
+			GenericProxyError(tr("cannot connect"), tr("http out proxy not implemented"));
+		} else GenericProxyError(tr("cannot connect to upstream http proxy"), ec.message());
 	}
 
 	/* will be called after some data received from client */
@@ -634,7 +641,7 @@ namespace proxy {
 	{
 		if (!stream) {
 			LogPrint (eLogError, "HTTPProxy: error when creating the stream, check the previous warnings for more info");
-			GenericProxyError("Host is down", "Can't create connection to requested host, it may be down. Please try again later.");
+			GenericProxyError(tr("Host is down"), tr("Can't create connection to requested host, it may be down. Please try again later."));
 			return;
 		}
 		if (Kill())

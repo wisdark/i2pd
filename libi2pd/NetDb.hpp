@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2020, The PurpleI2P Project
+* Copyright (c) 2013-2021, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -11,7 +11,7 @@
 // this file is called NetDb.hpp to resolve conflict with libc's netdb.h on case insensitive fs
 #include <inttypes.h>
 #include <set>
-#include <map>
+#include <unordered_map>
 #include <list>
 #include <string>
 #include <thread>
@@ -36,12 +36,17 @@ namespace i2p
 namespace data
 {
 	const int NETDB_MIN_ROUTERS = 90;
+	const int NETDB_MIN_FLOODFILLS = 5;
 	const int NETDB_FLOODFILL_EXPIRATION_TIMEOUT = 60 * 60; // 1 hour, in seconds
 	const int NETDB_INTRODUCEE_EXPIRATION_TIMEOUT = 65 * 60;
 	const int NETDB_MIN_EXPIRATION_TIMEOUT = 90 * 60; // 1.5 hours
 	const int NETDB_MAX_EXPIRATION_TIMEOUT = 27 * 60 * 60; // 27 hours
 	const int NETDB_PUBLISH_INTERVAL = 60 * 40;
+	const int NETDB_PUBLISH_CONFIRMATION_TIMEOUT = 5; // in seconds
+	const int NETDB_MAX_PUBLISH_EXCLUDED_FLOODFILLS = 15; 
 	const int NETDB_MIN_HIGHBANDWIDTH_VERSION = MAKE_VERSION_NUMBER(0, 9, 36); // 0.9.36
+	const int NETDB_MIN_FLOODFILL_VERSION = MAKE_VERSION_NUMBER(0, 9, 38); // 0.9.38
+	const int NETDB_MIN_SHORT_TUNNEL_BUILD_VERSION = MAKE_VERSION_NUMBER(0, 9, 51); // 0.9.51
 
 	/** function for visiting a leaseset stored in a floodfill */
 	typedef std::function<void(const IdentHash, std::shared_ptr<LeaseSet>)> LeaseSetVisitor;
@@ -70,20 +75,21 @@ namespace data
 			std::shared_ptr<LeaseSet> FindLeaseSet (const IdentHash& destination) const;
 			std::shared_ptr<RouterProfile> FindRouterProfile (const IdentHash& ident) const;
 
-			void RequestDestination (const IdentHash& destination, RequestedDestination::RequestComplete requestComplete = nullptr);
+			void RequestDestination (const IdentHash& destination, RequestedDestination::RequestComplete requestComplete = nullptr, bool direct = true);
 			void RequestDestinationFrom (const IdentHash& destination, const IdentHash & from, bool exploritory, RequestedDestination::RequestComplete requestComplete = nullptr);
 
 			void HandleDatabaseStoreMsg (std::shared_ptr<const I2NPMessage> msg);
 			void HandleDatabaseSearchReplyMsg (std::shared_ptr<const I2NPMessage> msg);
 			void HandleDatabaseLookupMsg (std::shared_ptr<const I2NPMessage> msg);
 			void HandleNTCP2RouterInfoMsg (std::shared_ptr<const I2NPMessage> m);
+			void HandleDeliveryStatusMsg (std::shared_ptr<const I2NPMessage> msg);
 
 			std::shared_ptr<const RouterInfo> GetRandomRouter () const;
-			std::shared_ptr<const RouterInfo> GetRandomRouter (std::shared_ptr<const RouterInfo> compatibleWith) const;
-			std::shared_ptr<const RouterInfo> GetHighBandwidthRandomRouter (std::shared_ptr<const RouterInfo> compatibleWith) const;
-			std::shared_ptr<const RouterInfo> GetRandomPeerTestRouter (bool v4only = true) const;
+			std::shared_ptr<const RouterInfo> GetRandomRouter (std::shared_ptr<const RouterInfo> compatibleWith, bool reverse) const;
+			std::shared_ptr<const RouterInfo> GetHighBandwidthRandomRouter (std::shared_ptr<const RouterInfo> compatibleWith, bool reverse) const;
+			std::shared_ptr<const RouterInfo> GetRandomPeerTestRouter (bool v4, const std::set<IdentHash>& excluded) const;
 			std::shared_ptr<const RouterInfo> GetRandomSSUV6Router () const; // TODO: change to v6 peer test later
-			std::shared_ptr<const RouterInfo> GetRandomIntroducer () const;
+			std::shared_ptr<const RouterInfo> GetRandomIntroducer (bool v4, const std::set<IdentHash>& excluded) const;
 			std::shared_ptr<const RouterInfo> GetClosestFloodfill (const IdentHash& destination, const std::set<IdentHash>& excluded, bool closeThanUsOnly = false) const;
 			std::vector<IdentHash> GetClosestFloodfills (const IdentHash& destination, size_t num,
 				std::set<IdentHash>& excluded, bool closeThanUsOnly = false) const;
@@ -115,6 +121,8 @@ namespace data
 
 			void ClearRouterInfos () { m_RouterInfos.clear (); };
 
+			uint32_t GetPublishReplyToken () const { return m_PublishReplyToken; };
+
 		private:
 
 			void Load ();
@@ -138,9 +146,9 @@ namespace data
 		private:
 
 			mutable std::mutex m_LeaseSetsMutex;
-			std::map<IdentHash, std::shared_ptr<LeaseSet> > m_LeaseSets;
+			std::unordered_map<IdentHash, std::shared_ptr<LeaseSet> > m_LeaseSets;
 			mutable std::mutex m_RouterInfosMutex;
-			std::map<IdentHash, std::shared_ptr<RouterInfo> > m_RouterInfos;
+			std::unordered_map<IdentHash, std::shared_ptr<RouterInfo> > m_RouterInfos;
 			mutable std::mutex m_FloodfillsMutex;
 			std::list<std::shared_ptr<RouterInfo> > m_Floodfills;
 
@@ -162,9 +170,11 @@ namespace data
 			/** router info we are bootstrapping from or nullptr if we are not currently doing that*/
 			std::shared_ptr<RouterInfo> m_FloodfillBootstrap;
 
-
 			/** true if in hidden mode */
 			bool m_HiddenMode;
+
+			std::set<IdentHash> m_PublishExcluded;
+			uint32_t m_PublishReplyToken = 0;
 	};
 
 	extern NetDb netdb;

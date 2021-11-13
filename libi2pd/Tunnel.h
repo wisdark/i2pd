@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2020, The PurpleI2P Project
+* Copyright (c) 2013-2021, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -18,6 +18,7 @@
 #include <thread>
 #include <mutex>
 #include <memory>
+#include "util.h"
 #include "Queue.h"
 #include "Crypto.h"
 #include "TunnelConfig.h"
@@ -36,8 +37,13 @@ namespace tunnel
 	const int TUNNEL_EXPIRATION_THRESHOLD = 60; // 1 minute
 	const int TUNNEL_RECREATION_THRESHOLD = 90; // 1.5 minutes
 	const int TUNNEL_CREATION_TIMEOUT = 30; // 30 seconds
-	const int STANDARD_NUM_RECORDS = 5; // in VariableTunnelBuild message
-
+	const int STANDARD_NUM_RECORDS = 4; // in VariableTunnelBuild message
+	const int MAX_NUM_RECORDS = 8;
+	const int HIGH_LATENCY_PER_HOP = 250; // in milliseconds
+	
+	const size_t I2NP_TUNNEL_MESSAGE_SIZE = TUNNEL_DATA_MSG_SIZE + I2NP_HEADER_SIZE + 34; // reserved for alignment and NTCP 16 + 6 + 12
+	const size_t I2NP_TUNNEL_ENPOINT_MESSAGE_SIZE = 2*TUNNEL_DATA_MSG_SIZE + I2NP_HEADER_SIZE + TUNNEL_GATEWAY_HEADER_SIZE + 28; // reserved for alignment and NTCP 16 + 6 + 6 
+	
 	enum TunnelState
 	{
 		eTunnelStatePending,
@@ -69,12 +75,14 @@ namespace tunnel
 			std::shared_ptr<const TunnelConfig> GetTunnelConfig () const { return m_Config; }
 			std::vector<std::shared_ptr<const i2p::data::IdentityEx> > GetPeers () const;
 			std::vector<std::shared_ptr<const i2p::data::IdentityEx> > GetInvertedPeers () const;
+			bool IsShortBuildMessage () const { return m_IsShortBuildMessage; };
+			i2p::data::RouterInfo::CompatibleTransports GetFarEndTransports () const { return m_FarEndTransports; };
 			TunnelState GetState () const { return m_State; };
 			void SetState (TunnelState state);
 			bool IsEstablished () const { return m_State == eTunnelStateEstablished; };
 			bool IsFailed () const { return m_State == eTunnelStateFailed; };
 			bool IsRecreated () const { return m_IsRecreated; };
-			void SetIsRecreated () { m_IsRecreated = true; };
+			void SetRecreated (bool recreated) { m_IsRecreated = recreated; };
 			int GetNumHops () const { return m_Hops.size (); };
 			virtual bool IsInbound() const = 0;
 
@@ -97,6 +105,8 @@ namespace tunnel
 			bool LatencyFitsRange(uint64_t lowerbound, uint64_t upperbound) const;
 
 			bool LatencyIsKnown() const { return m_Latency > 0; }
+			bool IsSlow () const { return LatencyIsKnown() && (int)m_Latency > HIGH_LATENCY_PER_HOP*GetNumHops (); }
+			
 		protected:
 
 			void PrintHops (std::stringstream& s) const;
@@ -105,9 +115,11 @@ namespace tunnel
 
 			std::shared_ptr<const TunnelConfig> m_Config;
 			std::vector<std::unique_ptr<TunnelHop> > m_Hops;
+			bool m_IsShortBuildMessage;
 			std::shared_ptr<TunnelPool> m_Pool; // pool, tunnel belongs to, or null
 			TunnelState m_State;
-			bool m_IsRecreated;
+			i2p::data::RouterInfo::CompatibleTransports m_FarEndTransports;
+			bool m_IsRecreated; // if tunnel is replaced by new, or new tunnel requested to replace 
 			uint64_t m_Latency; // in milliseconds
 	};
 
@@ -125,7 +137,7 @@ namespace tunnel
 			void Print (std::stringstream& s) const;
 
 			// implements TunnelBase
-			void HandleTunnelDataMsg (std::shared_ptr<const i2p::I2NPMessage> tunnelMsg);
+			void HandleTunnelDataMsg (std::shared_ptr<i2p::I2NPMessage>&& tunnelMsg);
 
 			bool IsInbound() const { return false; }
 
@@ -141,7 +153,7 @@ namespace tunnel
 		public:
 
 			InboundTunnel (std::shared_ptr<const TunnelConfig> config): Tunnel (config), m_Endpoint (true) {};
-			void HandleTunnelDataMsg (std::shared_ptr<const I2NPMessage> msg);
+			void HandleTunnelDataMsg (std::shared_ptr<I2NPMessage>&& msg);
 			virtual size_t GetNumReceivedBytes () const { return m_Endpoint.GetNumReceivedBytes (); };
 			void Print (std::stringstream& s) const;
 			bool IsInbound() const { return true; }
@@ -201,8 +213,8 @@ namespace tunnel
 			void AddTransitTunnel (std::shared_ptr<TransitTunnel> tunnel);
 			void AddOutboundTunnel (std::shared_ptr<OutboundTunnel> newTunnel);
 			void AddInboundTunnel (std::shared_ptr<InboundTunnel> newTunnel);
-			std::shared_ptr<InboundTunnel> CreateInboundTunnel (std::shared_ptr<TunnelConfig> config, std::shared_ptr<OutboundTunnel> outboundTunnel);
-			std::shared_ptr<OutboundTunnel> CreateOutboundTunnel (std::shared_ptr<TunnelConfig> config);
+			std::shared_ptr<InboundTunnel> CreateInboundTunnel (std::shared_ptr<TunnelConfig> config, std::shared_ptr<TunnelPool> pool, std::shared_ptr<OutboundTunnel> outboundTunnel);
+			std::shared_ptr<OutboundTunnel> CreateOutboundTunnel (std::shared_ptr<TunnelConfig> config, std::shared_ptr<TunnelPool> pool);
 			void PostTunnelData (std::shared_ptr<I2NPMessage> msg);
 			void PostTunnelData (const std::vector<std::shared_ptr<I2NPMessage> >& msgs);
 			void AddPendingTunnel (uint32_t replyMsgID, std::shared_ptr<InboundTunnel> tunnel);
@@ -212,10 +224,13 @@ namespace tunnel
 			void DeleteTunnelPool (std::shared_ptr<TunnelPool> pool);
 			void StopTunnelPool (std::shared_ptr<TunnelPool> pool);
 
+			std::shared_ptr<I2NPMessage> NewI2NPTunnelMessage (bool endpoint);
+			
 		private:
 
 			template<class TTunnel>
-			std::shared_ptr<TTunnel> CreateTunnel (std::shared_ptr<TunnelConfig> config, std::shared_ptr<OutboundTunnel> outboundTunnel = nullptr);
+			std::shared_ptr<TTunnel> CreateTunnel (std::shared_ptr<TunnelConfig> config, 
+			    std::shared_ptr<TunnelPool> pool, std::shared_ptr<OutboundTunnel> outboundTunnel = nullptr);
 
 			template<class TTunnel>
 			std::shared_ptr<TTunnel> GetPendingTunnel (uint32_t replyMsgID, const std::map<uint32_t, std::shared_ptr<TTunnel> >& pendingTunnels);
@@ -230,10 +245,10 @@ namespace tunnel
 			void ManagePendingTunnels ();
 			template<class PendingTunnels>
 			void ManagePendingTunnels (PendingTunnels& pendingTunnels);
-			void ManageTunnelPools ();
+			void ManageTunnelPools (uint64_t ts);
 
-			std::shared_ptr<ZeroHopsInboundTunnel> CreateZeroHopsInboundTunnel ();
-			std::shared_ptr<ZeroHopsOutboundTunnel> CreateZeroHopsOutboundTunnel ();
+			std::shared_ptr<ZeroHopsInboundTunnel> CreateZeroHopsInboundTunnel (std::shared_ptr<TunnelPool> pool);
+			std::shared_ptr<ZeroHopsOutboundTunnel> CreateZeroHopsOutboundTunnel (std::shared_ptr<TunnelPool> pool);
 
 		private:
 
@@ -249,7 +264,9 @@ namespace tunnel
 			std::list<std::shared_ptr<TunnelPool>> m_Pools;
 			std::shared_ptr<TunnelPool> m_ExploratoryPool;
 			i2p::util::Queue<std::shared_ptr<I2NPMessage> > m_Queue;
-
+			i2p::util::MemoryPoolMt<I2NPMessageBuffer<I2NP_TUNNEL_ENPOINT_MESSAGE_SIZE> > m_I2NPTunnelEndpointMessagesMemoryPool;
+			i2p::util::MemoryPoolMt<I2NPMessageBuffer<I2NP_TUNNEL_MESSAGE_SIZE> > m_I2NPTunnelMessagesMemoryPool;
+			
 			// some stats
 			int m_NumSuccesiveTunnelCreations, m_NumFailedTunnelCreations;
 

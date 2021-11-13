@@ -11,9 +11,8 @@ if(WIN32 OR MSVC OR MSYS OR MINGW)
   message(SEND_ERROR "cmake build for windows is not supported. Please use MSYS2 with makefiles in project root.")
 endif()
 
-# configurale options
-option(WITH_AESNI           "Use AES-NI instructions set"             OFF)
-option(WITH_AVX             "Use AVX instructions"                    OFF)
+# configurable options
+option(WITH_AESNI           "Use AES-NI instructions set"             ON)
 option(WITH_HARDENING       "Use hardening compiler flags"            OFF)
 option(WITH_LIBRARY         "Build library"                           ON)
 option(WITH_BINARY          "Build binary"                            ON)
@@ -28,102 +27,59 @@ option(WITH_THREADSANITIZER "Build with thread sanitizer unix only"   OFF)
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake_modules")
 set(CMAKE_SOURCE_DIR "..")
 
+#Handle paths nicely
+include(GNUInstallDirs)
+
 # architecture
 include(TargetArch)
 target_architecture(ARCHITECTURE)
 
 set(LIBI2PD_SRC_DIR ../libi2pd)
 set(LIBI2PD_CLIENT_SRC_DIR ../libi2pd_client)
+set(LANG_SRC_DIR ../i18n)
 set(DAEMON_SRC_DIR ../daemon)
 
 include_directories(${LIBI2PD_SRC_DIR})
 include_directories(${LIBI2PD_CLIENT_SRC_DIR})
+include_directories(${LANG_SRC_DIR})
 include_directories(${DAEMON_SRC_DIR})
 
-set(LIBI2PD_SRC
-  "${LIBI2PD_SRC_DIR}/api.cpp"
-  "${LIBI2PD_SRC_DIR}/Base.cpp"
-  "${LIBI2PD_SRC_DIR}/Blinding.cpp"
-  "${LIBI2PD_SRC_DIR}/BloomFilter.cpp"
-  "${LIBI2PD_SRC_DIR}/ChaCha20.cpp"
-  "${LIBI2PD_SRC_DIR}/Config.cpp"
-  "${LIBI2PD_SRC_DIR}/CPU.cpp"
-  "${LIBI2PD_SRC_DIR}/Crypto.cpp"
-  "${LIBI2PD_SRC_DIR}/CryptoKey.cpp"
-  "${LIBI2PD_SRC_DIR}/Datagram.cpp"
-  "${LIBI2PD_SRC_DIR}/Destination.cpp"
-  "${LIBI2PD_SRC_DIR}/ECIESX25519AEADRatchetSession.cpp"
-  "${LIBI2PD_SRC_DIR}/Ed25519.cpp"
-  "${LIBI2PD_SRC_DIR}/Elligator.cpp"
-  "${LIBI2PD_SRC_DIR}/Family.cpp"
-  "${LIBI2PD_SRC_DIR}/FS.cpp"
-  "${LIBI2PD_SRC_DIR}/Garlic.cpp"
-  "${LIBI2PD_SRC_DIR}/Gost.cpp"
-  "${LIBI2PD_SRC_DIR}/Gzip.cpp"
-  "${LIBI2PD_SRC_DIR}/HTTP.cpp"
-  "${LIBI2PD_SRC_DIR}/I2NPProtocol.cpp"
-  "${LIBI2PD_SRC_DIR}/Identity.cpp"
-  "${LIBI2PD_SRC_DIR}/LeaseSet.cpp"
-  "${LIBI2PD_SRC_DIR}/Log.cpp"
-  "${LIBI2PD_SRC_DIR}/NetDb.cpp"
-  "${LIBI2PD_SRC_DIR}/NetDbRequests.cpp"
-  "${LIBI2PD_SRC_DIR}/NTCP2.cpp"
-  "${LIBI2PD_SRC_DIR}/NTCPSession.cpp"
-  "${LIBI2PD_SRC_DIR}/Poly1305.cpp"
-  "${LIBI2PD_SRC_DIR}/Profiling.cpp"
-  "${LIBI2PD_SRC_DIR}/Reseed.cpp"
-  "${LIBI2PD_SRC_DIR}/RouterContext.cpp"
-  "${LIBI2PD_SRC_DIR}/RouterInfo.cpp"
-  "${LIBI2PD_SRC_DIR}/Signature.cpp"
-  "${LIBI2PD_SRC_DIR}/SSU.cpp"
-  "${LIBI2PD_SRC_DIR}/SSUData.cpp"
-  "${LIBI2PD_SRC_DIR}/SSUSession.cpp"
-  "${LIBI2PD_SRC_DIR}/Streaming.cpp"
-  "${LIBI2PD_SRC_DIR}/Timestamp.cpp"
-  "${LIBI2PD_SRC_DIR}/TransitTunnel.cpp"
-  "${LIBI2PD_SRC_DIR}/Transports.cpp"
-  "${LIBI2PD_SRC_DIR}/Tunnel.cpp"
-  "${LIBI2PD_SRC_DIR}/TunnelEndpoint.cpp"
-  "${LIBI2PD_SRC_DIR}/TunnelGateway.cpp"
-  "${LIBI2PD_SRC_DIR}/TunnelPool.cpp"
-  "${LIBI2PD_SRC_DIR}/util.cpp"
-)
-
+FILE(GLOB LIBI2PD_SRC ${LIBI2PD_SRC_DIR}/*.cpp)
 add_library(libi2pd ${LIBI2PD_SRC})
 set_target_properties(libi2pd PROPERTIES PREFIX "")
 
 if(WITH_LIBRARY)
   install(TARGETS libi2pd
     EXPORT libi2pd
-    ARCHIVE DESTINATION lib
-    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     COMPONENT Libraries)
 # TODO Make libi2pd available to 3rd party projects via CMake as imported target
 # FIXME This pulls stdafx
 # install(EXPORT libi2pd DESTINATION ${CMAKE_INSTALL_LIBDIR})
 endif()
 
-set(CLIENT_SRC
-  "${LIBI2PD_CLIENT_SRC_DIR}/AddressBook.cpp"
-  "${LIBI2PD_CLIENT_SRC_DIR}/BOB.cpp"
-  "${LIBI2PD_CLIENT_SRC_DIR}/ClientContext.cpp"
-  "${LIBI2PD_CLIENT_SRC_DIR}/MatchedDestination.cpp"
-  "${LIBI2PD_CLIENT_SRC_DIR}/I2PTunnel.cpp"
-  "${LIBI2PD_CLIENT_SRC_DIR}/I2PService.cpp"
-  "${LIBI2PD_CLIENT_SRC_DIR}/SAM.cpp"
-  "${LIBI2PD_CLIENT_SRC_DIR}/SOCKS.cpp"
-  "${LIBI2PD_CLIENT_SRC_DIR}/HTTPProxy.cpp"
-  "${LIBI2PD_CLIENT_SRC_DIR}/I2CP.cpp"
-)
-
+FILE(GLOB CLIENT_SRC ${LIBI2PD_CLIENT_SRC_DIR}/*.cpp)
 add_library(libi2pdclient ${CLIENT_SRC})
 set_target_properties(libi2pdclient PROPERTIES PREFIX "")
 
 if(WITH_LIBRARY)
   install(TARGETS libi2pdclient
     EXPORT libi2pdclient
-    ARCHIVE DESTINATION lib
-    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    COMPONENT Libraries)
+endif()
+
+FILE(GLOB LANG_SRC ${LANG_SRC_DIR}/*.cpp)
+add_library(libi2pdlang ${LANG_SRC})
+set_target_properties(libi2pdlang PROPERTIES PREFIX "")
+
+if(WITH_LIBRARY)
+  install(TARGETS libi2pdlang
+    EXPORT libi2pdlang
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     COMPONENT Libraries)
 endif()
 
@@ -189,13 +145,11 @@ if(UNIX)
   endif()
 endif()
 
-if(WITH_AESNI)
+# Note: AES-NI and AVX is available on x86-based CPU's.
+# Here also ARM64 implementation, but currently we don't support it.
+if(WITH_AESNI AND (ARCHITECTURE MATCHES "x86_64" OR ARCHITECTURE MATCHES "i386"))
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -maes")
-  add_definitions(-DAESNI)
-endif()
-
-if(WITH_AVX)
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx")
+  add_definitions(-D__AES__)
 endif()
 
 if(WITH_ADDRSANITIZER)
@@ -257,10 +211,11 @@ if(WITH_PCH)
   )
   target_compile_options(libi2pd PRIVATE -include libi2pd/stdafx.h)
   target_compile_options(libi2pdclient PRIVATE -include libi2pd/stdafx.h)
+  target_compile_options(libi2pdlang PRIVATE -include libi2pd/stdafx.h)
   target_link_libraries(libi2pd stdafx)
 endif()
 
-target_link_libraries(libi2pdclient libi2pd)
+target_link_libraries(libi2pdclient libi2pd libi2pdlang)
 
 find_package(Boost COMPONENTS system filesystem program_options date_time REQUIRED)
 if(NOT DEFINED Boost_INCLUDE_DIRS)
@@ -309,7 +264,6 @@ message(STATUS "Architecture       : ${ARCHITECTURE}")
 message(STATUS "Install prefix:    : ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "Options:")
 message(STATUS "  AESNI            : ${WITH_AESNI}")
-message(STATUS "  AVX              : ${WITH_AVX}")
 message(STATUS "  HARDENING        : ${WITH_HARDENING}")
 message(STATUS "  LIBRARY          : ${WITH_LIBRARY}")
 message(STATUS "  BINARY           : ${WITH_BINARY}")
@@ -320,9 +274,6 @@ message(STATUS "  MESHNET          : ${WITH_MESHNET}")
 message(STATUS "  ADDRSANITIZER    : ${WITH_ADDRSANITIZER}")
 message(STATUS "  THREADSANITIZER  : ${WITH_THREADSANITIZER}")
 message(STATUS "---------------------------------------")
-
-#Handle paths nicely
-include(GNUInstallDirs)
 
 if(WITH_BINARY)
   add_executable("${PROJECT_NAME}" ${DAEMON_SRC})
@@ -355,7 +306,7 @@ if(WITH_BINARY)
   endif()
 
   target_link_libraries(libi2pd ${Boost_LIBRARIES} ${ZLIB_LIBRARY})
-  target_link_libraries("${PROJECT_NAME}" libi2pd libi2pdclient ${DL_LIB} ${Boost_LIBRARIES} ${OPENSSL_LIBRARIES} ${UPNP_LIB} ${ZLIB_LIBRARY} ${CMAKE_THREAD_LIBS_INIT} ${MINGW_EXTRA} ${DL_LIB} ${CMAKE_REQUIRED_LIBRARIES})
+  target_link_libraries("${PROJECT_NAME}" libi2pd libi2pdclient libi2pdlang ${DL_LIB} ${Boost_LIBRARIES} ${OPENSSL_LIBRARIES} ${UPNP_LIB} ${ZLIB_LIBRARY} ${CMAKE_THREAD_LIBS_INIT} ${MINGW_EXTRA} ${DL_LIB} ${CMAKE_REQUIRED_LIBRARIES})
 
   install(TARGETS "${PROJECT_NAME}" RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)
   set(APPS "\${CMAKE_INSTALL_PREFIX}/bin/${PROJECT_NAME}${CMAKE_EXECUTABLE_SUFFIX}")
