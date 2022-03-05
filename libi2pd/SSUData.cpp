@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2021, The PurpleI2P Project
+* Copyright (c) 2013-2022, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -176,11 +176,10 @@ namespace transport
 			if (it == m_IncompleteMessages.end ())
 			{
 				// create new message
-				auto msg = (!fragmentNum && fragmentSize > 0 && buf[I2NP_SHORT_HEADER_TYPEID_OFFSET] == eI2NPTunnelData) ?
-					NewI2NPTunnelMessage (true) : NewI2NPShortMessage ();
+				auto msg = NewI2NPShortMessage ();
 				msg->len -= I2NP_SHORT_HEADER_SIZE;
 				it = m_IncompleteMessages.insert (std::make_pair (msgID,
-					m_Session.GetServer ().GetIncompleteMessagesPool ().AcquireShared (msg))).first;
+					m_Session.GetServer ().GetIncompleteMessagesPool ().AcquireShared (std::move (msg)))).first;
 			}
 			auto& incompleteMessage = it->second;
 			// mark fragment as received
@@ -188,7 +187,7 @@ namespace transport
 				incompleteMessage->receivedFragmentsBits |= (uint64_t(0x01) << fragmentNum);
 			else
 				LogPrint (eLogWarning, "SSU: Fragment number ", fragmentNum, " exceeds 64");
-			
+
 			// handle current fragment
 			if (fragmentNum == incompleteMessage->nextFragmentNum)
 			{
@@ -223,7 +222,7 @@ namespace transport
 					// missing fragment
 					LogPrint (eLogWarning, "SSU: Missing fragments from ", (int)incompleteMessage->nextFragmentNum, " to ", fragmentNum - 1, " of message ", msgID);
 					auto savedFragment = m_Session.GetServer ().GetFragmentsPool ().AcquireShared (fragmentNum, buf, fragmentSize, isLast);
-					if (incompleteMessage->savedFragments.insert (savedFragment).second)	
+					if (incompleteMessage->savedFragments.insert (savedFragment).second)
 						incompleteMessage->lastFragmentInsertTime = i2p::util::GetSecondsSinceEpoch ();
 					else
 						LogPrint (eLogWarning, "SSU: Fragment ", (int)fragmentNum, " of message ", msgID, " already saved");
@@ -350,11 +349,11 @@ namespace transport
 			size += payload - fragment->buf;
 			uint8_t rem = size & 0x0F;
 			if (rem) // make sure 16 bytes boundary
-			{	
+			{
 				auto padding = 16 - rem;
 				memset (fragment->buf + size, 0, padding);
 				size += padding;
-			}	
+			}
 			fragment->len = size;
 			fragments.push_back (fragment);
 
@@ -409,14 +408,14 @@ namespace transport
 		// one ack
 		*(uint32_t *)(payload) = htobe32 (msgID); // msgID
 		payload += 4;
-		size_t len = 0; 
+		size_t len = 0;
 		while (bits)
 		{
 			*payload = (bits & 0x7F); // next 7 bits
 			bits >>= 7;
 			if (bits) *payload &= 0x80; // 0x80 means non-last
 			payload++; len++;
-		}	
+		}
 		*payload = 0; // number of fragments
 		len = (len <= 4) ? 48 : 64; // 48 = 37 + 7 + 4
 		// encrypt message with session key
@@ -450,7 +449,7 @@ namespace transport
 							if (f)
 							{
 								try
-								{					
+								{
 									m_Session.FillHeaderAndEncrypt (PAYLOAD_TYPE_DATA, f->buf, f->len, buf);
 									m_Session.Send (buf, f->len); // resend
 									numResent++;
@@ -497,21 +496,21 @@ namespace transport
 			else
 				++it;
 		}
-	
+
 		if (m_ReceivedMessages.size () > MAX_NUM_RECEIVED_MESSAGES || ts > m_LastMessageReceivedTime + DECAY_INTERVAL)
 			// decay
 			m_ReceivedMessages.clear ();
 		else
 		{
-			// delete old received messages	
+			// delete old received messages
 			for (auto it = m_ReceivedMessages.begin (); it != m_ReceivedMessages.end ();)
 			{
 				if (ts > it->second + RECEIVED_MESSAGES_CLEANUP_TIMEOUT)
 					it = m_ReceivedMessages.erase (it);
 				else
 					++it;
-			}		
-		}		
-	}	
+			}
+		}
+	}
 }
 }

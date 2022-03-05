@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2021, The PurpleI2P Project
+* Copyright (c) 2013-2022, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -30,7 +30,7 @@ namespace tunnel
 	const int TUNNEL_POOL_MANAGE_INTERVAL = 10; // in seconds
 	const int TUNNEL_POOL_MAX_INBOUND_TUNNELS_QUANTITY = 16;
 	const int TUNNEL_POOL_MAX_OUTBOUND_TUNNELS_QUANTITY = 16;
-	
+
 	class Tunnel;
 	class InboundTunnel;
 	class OutboundTunnel;
@@ -41,7 +41,7 @@ namespace tunnel
 		std::vector<Peer> peers;
 		bool isShort = true;
 		i2p::data::RouterInfo::CompatibleTransports farEndTransports = i2p::data::RouterInfo::eAllTransports;
-	
+
 		void Add (std::shared_ptr<const i2p::data::RouterInfo> r);
 		void Reverse ();
 	};
@@ -56,7 +56,7 @@ namespace tunnel
 
 	typedef std::function<std::shared_ptr<const i2p::data::RouterInfo>(std::shared_ptr<const i2p::data::RouterInfo>, bool)> SelectHopFunc;
 	bool StandardSelectPeers(Path & path, int numHops, bool inbound, SelectHopFunc nextHop);
-	
+
 	class TunnelPool: public std::enable_shared_from_this<TunnelPool> // per local destination
 	{
 		public:
@@ -81,7 +81,6 @@ namespace tunnel
 			std::shared_ptr<InboundTunnel> GetNextInboundTunnel (std::shared_ptr<InboundTunnel> excluded = nullptr,
 				i2p::data::RouterInfo::CompatibleTransports compatible = i2p::data::RouterInfo::eAllTransports) const;
 			std::shared_ptr<OutboundTunnel> GetNewOutboundTunnel (std::shared_ptr<OutboundTunnel> old) const;
-			void TestTunnels ();
 			void ManageTunnels (uint64_t ts);
 			void ProcessGarlicMessage (std::shared_ptr<I2NPMessage> msg);
 			void ProcessDeliveryStatus (std::shared_ptr<I2NPMessage> msg);
@@ -118,11 +117,12 @@ namespace tunnel
 
 		private:
 
+			void TestTunnels ();
 			void CreateInboundTunnel ();
 			void CreateOutboundTunnel ();
 			void CreatePairedInboundTunnel (std::shared_ptr<OutboundTunnel> outboundTunnel);
 			template<class TTunnels>
-			typename TTunnels::value_type GetNextTunnel (TTunnels& tunnels, 
+			typename TTunnels::value_type GetNextTunnel (TTunnels& tunnels,
 				typename TTunnels::value_type excluded, i2p::data::RouterInfo::CompatibleTransports compatible) const;
 			bool SelectPeers (Path& path, bool isInbound);
 			bool SelectExplicitPeers (Path& path, bool isInbound);

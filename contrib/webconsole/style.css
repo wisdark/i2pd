@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2021, The PurpleI2P Project
+ * Copyright (c) 2021-2022, The PurpleI2P Project
  *
  * This file is part of Purple i2pd project and licensed under BSD3
  *
@@ -15,16 +15,18 @@
 */
 
 :root {
-	--main-bg-color: #FAFAFA;
+	--main-bg-color: #fafafa;
 	--main-text-color: #103456;
-	--main-link-color: #894C84;
+	--main-link-color: #894c84;
+	--main-link-hover-color: #fafafa;
 }
 
 @media (prefers-color-scheme: dark) {
 	:root {
-		--main-bg-color: #181818;
-		--main-text-color: #156A3D;
-		--main-link-color: #894C84;
+		--main-bg-color: #242424;
+		--main-text-color: #17ab5c;
+		--main-link-color: #bf64b7;
+		--main-link-hover-color: #000000;
 	}
 }
 
@@ -42,7 +44,7 @@ a, .slide label {
 }
 
 a:hover, .slide label:hover, button[type=submit]:hover {
-	color: #FAFAFA;
+	color: var(--main-link-hover-color);
 	background: var(--main-link-color);
 }
 
@@ -63,7 +65,7 @@ a.button {
 .wrapper {
 	margin: 0 auto;
 	padding: 1em;
-	max-width: 60em;
+	max-width: 64em;
 }
 
 .menu {
@@ -92,7 +94,7 @@ a.button {
 .content {
 	float: left;
 	font-size: 1em;
-	margin-left: 4em;
+	margin-left: 2em;
 	padding: 4px;
 	max-width: 50em;
 	overflow: auto;
@@ -192,16 +194,11 @@ input[type=number]::-webkit-inner-spin-button {
 
 @media screen and (max-width: 1150px) { /* adaptive style */
 	.wrapper {
-		max-width: 56em;
-	}
-	
-	.menu {
-		max-width: 10em;
+		max-width: 58em;
 	}
 
 	.content {
-		margin-left: 2em;
-		max-width: 44em;
+		max-width: 40em;
 	}
 }
 

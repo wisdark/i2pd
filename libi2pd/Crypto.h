@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2021, The PurpleI2P Project
+* Copyright (c) 2013-2022, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -95,7 +95,7 @@ namespace crypto
 
 			bool IsElligatorIneligible () const { return m_IsElligatorIneligible; }
 			void SetElligatorIneligible () { m_IsElligatorIneligible = true; }
-			
+
 		private:
 
 			uint8_t m_PublicKey[32];
@@ -106,11 +106,11 @@ namespace crypto
 			BN_CTX * m_Ctx;
 			uint8_t m_PrivateKey[32];
 #endif
-			bool m_IsElligatorIneligible = false; // true if definitly ineligible
+			bool m_IsElligatorIneligible = false; // true if definitely ineligible
 	};
 
 	// ElGamal
-	void ElGamalEncrypt (const uint8_t * key, const uint8_t * data, uint8_t * encrypted); // 222 bytes data, 514 bytes encrypted 
+	void ElGamalEncrypt (const uint8_t * key, const uint8_t * data, uint8_t * encrypted); // 222 bytes data, 514 bytes encrypted
 	bool ElGamalDecrypt (const uint8_t * key, const uint8_t * encrypted, uint8_t * data); // 514 bytes encrypted, 222 data
 	void GenerateElGamalKeyPair (uint8_t * priv, uint8_t * pub);
 
@@ -317,13 +317,14 @@ namespace crypto
 		uint8_t m_H[32] /*h*/, m_CK[64] /*[ck, k]*/;
 
 		void MixHash (const uint8_t * buf, size_t len);
-		void MixKey (const uint8_t * sharedSecret);	
+		void MixKey (const uint8_t * sharedSecret);
 	};
 
 	void InitNoiseNState (NoiseSymmetricState& state, const uint8_t * pub); // Noise_N (tunnels, router)
 	void InitNoiseXKState (NoiseSymmetricState& state, const uint8_t * pub); // Noise_XK (NTCP2)
+	void InitNoiseXKState1 (NoiseSymmetricState& state, const uint8_t * pub); // Noise_XK (SSU2)
 	void InitNoiseIKState (NoiseSymmetricState& state, const uint8_t * pub); // Noise_IK (ratchets)
-	
+
 // init and terminate
 	void InitCrypto (bool precomputation, bool aesni, bool avx, bool force);
 	void TerminateCrypto ();
