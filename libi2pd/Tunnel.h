@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2021, The PurpleI2P Project
+* Copyright (c) 2013-2022, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -67,6 +67,9 @@ namespace tunnel
 
 		public:
 
+			/** function for visiting a hops stored in a tunnel */
+			typedef std::function<void(std::shared_ptr<const i2p::data::IdentityEx>)> TunnelHopVisitor;
+
 			Tunnel (std::shared_ptr<const TunnelConfig> config);
 			~Tunnel ();
 
@@ -91,8 +94,6 @@ namespace tunnel
 
 			bool HandleTunnelBuildResponse (uint8_t * msg, size_t len);
 
-			virtual void Print (std::stringstream&) const {};
-
 			// implements TunnelBase
 			void SendTunnelDataMsg (std::shared_ptr<i2p::I2NPMessage> msg);
 			void EncryptTunnelMsg (std::shared_ptr<const I2NPMessage> in, std::shared_ptr<I2NPMessage> out);
@@ -107,9 +108,8 @@ namespace tunnel
 			bool LatencyIsKnown() const { return m_Latency > 0; }
 			bool IsSlow () const { return LatencyIsKnown() && (int)m_Latency > HIGH_LATENCY_PER_HOP*GetNumHops (); }
 
-		protected:
-
-			void PrintHops (std::stringstream& s) const;
+			/** visit all hops we currently store */
+			void VisitTunnelHops(TunnelHopVisitor v);
 
 		private:
 
@@ -134,7 +134,6 @@ namespace tunnel
 			virtual void SendTunnelDataMsg (const std::vector<TunnelMessageBlock>& msgs); // multiple messages
 			const i2p::data::IdentHash& GetEndpointIdentHash () const { return m_EndpointIdentHash; };
 			virtual size_t GetNumSentBytes () const { return m_Gateway.GetNumSentBytes (); };
-			void Print (std::stringstream& s) const;
 
 			// implements TunnelBase
 			void HandleTunnelDataMsg (std::shared_ptr<i2p::I2NPMessage>&& tunnelMsg);
@@ -155,7 +154,6 @@ namespace tunnel
 			InboundTunnel (std::shared_ptr<const TunnelConfig> config): Tunnel (config), m_Endpoint (true) {};
 			void HandleTunnelDataMsg (std::shared_ptr<I2NPMessage>&& msg);
 			virtual size_t GetNumReceivedBytes () const { return m_Endpoint.GetNumReceivedBytes (); };
-			void Print (std::stringstream& s) const;
 			bool IsInbound() const { return true; }
 
 			// override TunnelBase
@@ -172,7 +170,6 @@ namespace tunnel
 
 			ZeroHopsInboundTunnel ();
 			void SendTunnelDataMsg (std::shared_ptr<i2p::I2NPMessage> msg);
-			void Print (std::stringstream& s) const;
 			size_t GetNumReceivedBytes () const { return m_NumReceivedBytes; };
 
 		private:
@@ -186,7 +183,6 @@ namespace tunnel
 
 			ZeroHopsOutboundTunnel ();
 			void SendTunnelDataMsg (const std::vector<TunnelMessageBlock>& msgs);
-			void Print (std::stringstream& s) const;
 			size_t GetNumSentBytes () const { return m_NumSentBytes; };
 
 		private:
@@ -219,8 +215,8 @@ namespace tunnel
 			void PostTunnelData (const std::vector<std::shared_ptr<I2NPMessage> >& msgs);
 			void AddPendingTunnel (uint32_t replyMsgID, std::shared_ptr<InboundTunnel> tunnel);
 			void AddPendingTunnel (uint32_t replyMsgID, std::shared_ptr<OutboundTunnel> tunnel);
-			std::shared_ptr<TunnelPool> CreateTunnelPool (int numInboundHops,
-				int numOuboundHops, int numInboundTunnels, int numOutboundTunnels);
+			std::shared_ptr<TunnelPool> CreateTunnelPool (int numInboundHops, int numOuboundHops,
+				int numInboundTunnels, int numOutboundTunnels, int inboundVariance, int outboundVariance);
 			void DeleteTunnelPool (std::shared_ptr<TunnelPool> pool);
 			void StopTunnelPool (std::shared_ptr<TunnelPool> pool);
 
@@ -230,7 +226,7 @@ namespace tunnel
 
 			template<class TTunnel>
 			std::shared_ptr<TTunnel> CreateTunnel (std::shared_ptr<TunnelConfig> config,
-			    std::shared_ptr<TunnelPool> pool, std::shared_ptr<OutboundTunnel> outboundTunnel = nullptr);
+				std::shared_ptr<TunnelPool> pool, std::shared_ptr<OutboundTunnel> outboundTunnel = nullptr);
 
 			template<class TTunnel>
 			std::shared_ptr<TTunnel> GetPendingTunnel (uint32_t replyMsgID, const std::map<uint32_t, std::shared_ptr<TTunnel> >& pendingTunnels);

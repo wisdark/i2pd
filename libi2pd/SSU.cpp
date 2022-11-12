@@ -15,7 +15,7 @@
 #include "util.h"
 #include "SSU.h"
 
-#ifdef __linux__
+#if defined(__linux__) && !defined(_NETINET_IN_H)
 	#include <linux/in6.h>
 #endif
 
@@ -68,7 +68,7 @@ namespace transport
 			m_SocketV6.set_option (boost::asio::ip::v6_only (true));
 			m_SocketV6.set_option (boost::asio::socket_base::receive_buffer_size (SSU_SOCKET_RECEIVE_BUFFER_SIZE));
 			m_SocketV6.set_option (boost::asio::socket_base::send_buffer_size (SSU_SOCKET_SEND_BUFFER_SIZE));
-#ifdef __linux__
+#if defined(__linux__) && !defined(_NETINET_IN_H)
 			if (m_EndpointV6.address() == boost::asio::ip::address().from_string("::")) // only if not binded to address
 			{
 				// Set preference to use public IPv6 address -- tested on linux, not works on windows, and not tested on others
@@ -273,14 +273,14 @@ namespace transport
 	void SSUServer::HandleReceivedFrom (const boost::system::error_code& ecode, std::size_t bytes_transferred, SSUPacket * packet)
 	{
 		if (!ecode
-		    || ecode == boost::asio::error::connection_refused
-		    || ecode == boost::asio::error::connection_reset
-		    || ecode == boost::asio::error::network_unreachable
-		    || ecode == boost::asio::error::host_unreachable
+			|| ecode == boost::asio::error::connection_refused
+			|| ecode == boost::asio::error::connection_reset
+			|| ecode == boost::asio::error::network_unreachable
+			|| ecode == boost::asio::error::host_unreachable
 #ifdef _WIN32 // windows can throw WinAPI error, which is not handled by ASIO
-		    || ecode.value() == boost::winapi::ERROR_CONNECTION_REFUSED_
-		    || ecode.value() == boost::winapi::ERROR_NETWORK_UNREACHABLE_
-		    || ecode.value() == boost::winapi::ERROR_HOST_UNREACHABLE_
+			|| ecode.value() == boost::winapi::ERROR_CONNECTION_REFUSED_
+			|| ecode.value() == boost::winapi::ERROR_NETWORK_UNREACHABLE_
+			|| ecode.value() == boost::winapi::ERROR_HOST_UNREACHABLE_
 #endif
 		)
 		// just try continue reading when received ICMP response otherwise socket can crash,
@@ -332,14 +332,14 @@ namespace transport
 	void SSUServer::HandleReceivedFromV6 (const boost::system::error_code& ecode, std::size_t bytes_transferred, SSUPacket * packet)
 	{
 		if (!ecode
-		    || ecode == boost::asio::error::connection_refused
-		    || ecode == boost::asio::error::connection_reset
-		    || ecode == boost::asio::error::network_unreachable
-		    || ecode == boost::asio::error::host_unreachable
+			|| ecode == boost::asio::error::connection_refused
+			|| ecode == boost::asio::error::connection_reset
+			|| ecode == boost::asio::error::network_unreachable
+			|| ecode == boost::asio::error::host_unreachable
 #ifdef _WIN32 // windows can throw WinAPI error, which is not handled by ASIO
-		    || ecode.value() == boost::winapi::ERROR_CONNECTION_REFUSED_
-		    || ecode.value() == boost::winapi::ERROR_NETWORK_UNREACHABLE_
-		    || ecode.value() == boost::winapi::ERROR_HOST_UNREACHABLE_
+			|| ecode.value() == boost::winapi::ERROR_CONNECTION_REFUSED_
+			|| ecode.value() == boost::winapi::ERROR_NETWORK_UNREACHABLE_
+			|| ecode.value() == boost::winapi::ERROR_HOST_UNREACHABLE_
 #endif
 		)
 		// just try continue reading when received ICMP response otherwise socket can crash,
@@ -582,7 +582,7 @@ namespace transport
 							"] through introducer ", introducer->iHost, ":", introducer->iPort);
 					session->WaitForIntroduction ();
 					if ((address->host.is_v4 () && i2p::context.GetStatus () == eRouterStatusFirewalled) ||
-					    (address->host.is_v6 () && i2p::context.GetStatusV6 () == eRouterStatusFirewalled))
+						(address->host.is_v6 () && i2p::context.GetStatusV6 () == eRouterStatusFirewalled))
 					{
 						uint8_t buf[1];
 						Send (buf, 0, remoteEndpoint); // send HolePunch
@@ -676,7 +676,7 @@ namespace transport
 		for (const auto& s : sessions)
 		{
 			if (s.second->GetRelayTag () && s.second->GetState () == eSessionStateEstablished &&
-			    ts < s.second->GetCreationTime () + SSU_TO_INTRODUCER_SESSION_EXPIRATION)
+				ts < s.second->GetCreationTime () + SSU_TO_INTRODUCER_SESSION_EXPIRATION)
 				ret.push_back (s.second);
 			else if (s.second->GetRemoteIdentity ())
 				excluded.insert (s.second->GetRemoteIdentity ()->GetIdentHash ());

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2021, The PurpleI2P Project
+* Copyright (c) 2013-2022, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -108,13 +108,13 @@ namespace tunnel
 		else
 		{
 			if (m_Config->IsShort () && m_Config->GetLastHop () &&
-			    m_Config->GetLastHop ()->ident->GetIdentHash () != m_Config->GetLastHop ()->nextIdent)
+				m_Config->GetLastHop ()->ident->GetIdentHash () != m_Config->GetLastHop ()->nextIdent)
 			{
 				// add garlic key/tag for reply
 				uint8_t key[32];
 				uint64_t tag = m_Config->GetLastHop ()->GetGarlicKey (key);
 				if (m_Pool && m_Pool->GetLocalDestination ())
-					m_Pool->GetLocalDestination ()->AddECIESx25519Key (key, tag);
+					m_Pool->GetLocalDestination ()->SubmitECIESx25519Key (key, tag);
 				else
 					i2p::context.AddECIESx25519Key (key, tag);
 			}
@@ -235,15 +235,11 @@ namespace tunnel
 		m_State = state;
 	}
 
-
-	void Tunnel::PrintHops (std::stringstream& s) const
+	void Tunnel::VisitTunnelHops(TunnelHopVisitor v)
 	{
-		// hops are in inverted order, we must print in direct order
+		// hops are in inverted order, we must return in direct order
 		for (auto it = m_Hops.rbegin (); it != m_Hops.rend (); it++)
-		{
-			s << " &#8658; ";
-			s << i2p::data::GetIdentHashAbbreviation ((*it).ident->GetIdentHash ());
-		}
+			v((*it).ident);
 	}
 
 	void InboundTunnel::HandleTunnelDataMsg (std::shared_ptr<I2NPMessage>&& msg)
@@ -252,12 +248,6 @@ namespace tunnel
 		EncryptTunnelMsg (msg, msg);
 		msg->from = shared_from_this ();
 		m_Endpoint.HandleDecryptedTunnelDataMsg (msg);
-	}
-
-	void InboundTunnel::Print (std::stringstream& s) const
-	{
-		PrintHops (s);
-		s << " &#8658; " << GetTunnelID () << ":me";
 	}
 
 	ZeroHopsInboundTunnel::ZeroHopsInboundTunnel ():
@@ -274,11 +264,6 @@ namespace tunnel
 			msg->from = shared_from_this ();
 			HandleI2NPMessage (msg);
 		}
-	}
-
-	void ZeroHopsInboundTunnel::Print (std::stringstream& s) const
-	{
-		s << " &#8658; " << GetTunnelID () << ":me";
 	}
 
 	void OutboundTunnel::SendTunnelDataMsg (const uint8_t * gwHash, uint32_t gwTunnel, std::shared_ptr<i2p::I2NPMessage> msg)
@@ -315,13 +300,6 @@ namespace tunnel
 		LogPrint (eLogError, "Tunnel: Incoming message for outbound tunnel ", GetTunnelID ());
 	}
 
-	void OutboundTunnel::Print (std::stringstream& s) const
-	{
-		s << GetTunnelID () << ":me";
-		PrintHops (s);
-		s << " &#8658; ";
-	}
-
 	ZeroHopsOutboundTunnel::ZeroHopsOutboundTunnel ():
 		OutboundTunnel (std::make_shared<ZeroHopsTunnelConfig> ()),
 		m_NumSentBytes (0)
@@ -349,11 +327,6 @@ namespace tunnel
 					LogPrint (eLogError, "Tunnel: Unknown delivery type ", (int)msg.deliveryType);
 			}
 		}
-	}
-
-	void ZeroHopsOutboundTunnel::Print (std::stringstream& s) const
-	{
-		s << GetTunnelID () << ":me &#8658; ";
 	}
 
 	Tunnels tunnels;
@@ -430,10 +403,10 @@ namespace tunnel
 		return tunnel;
 	}
 
-	std::shared_ptr<TunnelPool> Tunnels::CreateTunnelPool (int numInboundHops,
-		int numOutboundHops, int numInboundTunnels, int numOutboundTunnels)
+	std::shared_ptr<TunnelPool> Tunnels::CreateTunnelPool (int numInboundHops, int numOutboundHops,
+		int numInboundTunnels, int numOutboundTunnels, int inboundVariance, int outboundVariance)
 	{
-		auto pool = std::make_shared<TunnelPool> (numInboundHops, numOutboundHops, numInboundTunnels, numOutboundTunnels);
+		auto pool = std::make_shared<TunnelPool> (numInboundHops, numOutboundHops, numInboundTunnels, numOutboundTunnels, inboundVariance, outboundVariance);
 		std::unique_lock<std::mutex> l(m_PoolsMutex);
 		m_Pools.push_back (pool);
 		return pool;
@@ -783,7 +756,7 @@ namespace tunnel
 				int obLen; i2p::config::GetOption("exploratory.outbound.length", obLen);
 				int ibNum; i2p::config::GetOption("exploratory.inbound.quantity", ibNum);
 				int obNum; i2p::config::GetOption("exploratory.outbound.quantity", obNum);
-				m_ExploratoryPool = CreateTunnelPool (ibLen, obLen, ibNum, obNum);
+				m_ExploratoryPool = CreateTunnelPool (ibLen, obLen, ibNum, obNum, 0, 0);
 				m_ExploratoryPool->SetLocalDestination (i2p::context.GetSharedDestination ());
 			}
 			return;
@@ -849,7 +822,7 @@ namespace tunnel
 
 	template<class TTunnel>
 	std::shared_ptr<TTunnel> Tunnels::CreateTunnel (std::shared_ptr<TunnelConfig> config,
-	    std::shared_ptr<TunnelPool> pool, std::shared_ptr<OutboundTunnel> outboundTunnel)
+		std::shared_ptr<TunnelPool> pool, std::shared_ptr<OutboundTunnel> outboundTunnel)
 	{
 		auto newTunnel = std::make_shared<TTunnel> (config);
 		newTunnel->SetTunnelPool (pool);

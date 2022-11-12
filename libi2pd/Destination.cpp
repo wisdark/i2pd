@@ -13,7 +13,6 @@
 #include <vector>
 #include <boost/algorithm/string.hpp>
 #include "Crypto.h"
-#include "Config.h"
 #include "Log.h"
 #include "FS.h"
 #include "Timestamp.h"
@@ -35,6 +34,8 @@ namespace client
 		int inQty   = DEFAULT_INBOUND_TUNNELS_QUANTITY;
 		int outLen  = DEFAULT_OUTBOUND_TUNNEL_LENGTH;
 		int outQty  = DEFAULT_OUTBOUND_TUNNELS_QUANTITY;
+		int inVar   = DEFAULT_INBOUND_TUNNELS_LENGTH_VARIANCE;
+		int outVar  = DEFAULT_OUTBOUND_TUNNELS_LENGTH_VARIANCE;
 		int numTags = DEFAULT_TAGS_TO_SEND;
 		std::shared_ptr<std::vector<i2p::data::IdentHash> > explicitPeers;
 		try
@@ -53,6 +54,12 @@ namespace client
 				it = params->find (I2CP_PARAM_OUTBOUND_TUNNELS_QUANTITY);
 				if (it != params->end ())
 					outQty = std::stoi(it->second);
+				it = params->find (I2CP_PARAM_INBOUND_TUNNELS_LENGTH_VARIANCE);
+				if (it != params->end ())
+					inVar = std::stoi(it->second);
+				it = params->find (I2CP_PARAM_OUTBOUND_TUNNELS_LENGTH_VARIANCE);
+				if (it != params->end ())
+					outVar = std::stoi(it->second);
 				it = params->find (I2CP_PARAM_TAGS_TO_SEND);
 				if (it != params->end ())
 					numTags = std::stoi(it->second);
@@ -86,9 +93,7 @@ namespace client
 				if (it != params->end ())
 				{
 					// oveeride isPublic
-					bool dontpublish = false;
-					i2p::config::GetOption (it->second, dontpublish);
-					m_IsPublic = !dontpublish;
+					m_IsPublic = (it->second != "true");
 				}
 				it = params->find (I2CP_PARAM_LEASESET_TYPE);
 				if (it != params->end ())
@@ -123,7 +128,7 @@ namespace client
 			LogPrint(eLogError, "Destination: Unable to parse parameters for destination: ", ex.what());
 		}
 		SetNumTags (numTags);
-		m_Pool = i2p::tunnel::tunnels.CreateTunnelPool (inLen, outLen, inQty, outQty);
+		m_Pool = i2p::tunnel::tunnels.CreateTunnelPool (inLen, outLen, inQty, outQty, inVar, outVar);
 		if (explicitPeers)
 			m_Pool->SetExplicitPeers (explicitPeers);
 		if(params)
@@ -331,6 +336,22 @@ namespace client
 		return true;
 	}
 
+	void LeaseSetDestination::SubmitECIESx25519Key (const uint8_t * key, uint64_t tag)
+	{
+		struct
+		{
+			uint8_t k[32];
+			uint64_t t;
+		} data;
+		memcpy (data.k, key, 32);
+		data.t = tag;
+		auto s = shared_from_this ();
+		m_Service.post ([s,data](void)
+			{
+				s->AddECIESx25519Key (data.k, data.t);
+			});
+	}
+
 	void LeaseSetDestination::ProcessGarlicMessage (std::shared_ptr<I2NPMessage> msg)
 	{
 		m_Service.post (std::bind (&LeaseSetDestination::HandleGarlicMessage, shared_from_this (), msg));
@@ -396,7 +417,7 @@ namespace client
 				std::lock_guard<std::mutex> lock(m_RemoteLeaseSetsMutex);
 				auto it = m_RemoteLeaseSets.find (key);
 				if (it != m_RemoteLeaseSets.end () &&
-				    it->second->GetStoreType () == buf[DATABASE_STORE_TYPE_OFFSET]) // update only if same type
+					it->second->GetStoreType () == buf[DATABASE_STORE_TYPE_OFFSET]) // update only if same type
 				{
 					leaseSet = it->second;
 					if (leaseSet->IsNewer (buf + offset, len - offset))
@@ -566,7 +587,7 @@ namespace client
 			LogPrint (eLogError, "Destination: Can't publish LeaseSet, no more floodfills found");
 			m_ExcludedFloodfills.clear ();
 			return;
-		}	
+		}
 		auto outbound = m_Pool->GetNextOutboundTunnel (nullptr, floodfill->GetCompatibleTransports (false));
 		auto inbound = m_Pool->GetNextInboundTunnel (nullptr, floodfill->GetCompatibleTransports (true));
 		if (!outbound || !inbound)
@@ -578,22 +599,22 @@ namespace client
 			{
 				outbound = m_Pool->GetNextOutboundTunnel (nullptr, floodfill->GetCompatibleTransports (false));
 				if (outbound)
-				{	
+				{
 					inbound = m_Pool->GetNextInboundTunnel (nullptr, floodfill->GetCompatibleTransports (true));
 					if (!inbound)
 						LogPrint (eLogError, "Destination: Can't publish LeaseSet. No inbound tunnels");
-				}	
+				}
 				else
 					LogPrint (eLogError, "Destination: Can't publish LeaseSet. No outbound tunnels");
-			}	
+			}
 			else
 				LogPrint (eLogError, "Destination: Can't publish LeaseSet, no more floodfills found");
 			if (!floodfill || !outbound || !inbound)
 			{
 				m_ExcludedFloodfills.clear ();
 				return;
-			}	
-		}	
+			}
+		}
 		m_ExcludedFloodfills.insert (floodfill->GetIdentHash ());
 		LogPrint (eLogDebug, "Destination: Publish LeaseSet of ", GetIdentHash ().ToBase32 ());
 		RAND_bytes ((uint8_t *)&m_PublishReplyToken, 4);
@@ -930,7 +951,7 @@ namespace client
 		for (auto& it: encryptionKeyTypes)
 		{
 			auto encryptionKey = new EncryptionKey (it);
-			if (isPublic)
+			if (IsPublic ())
 				PersistTemporaryKeys (encryptionKey, isSingleKey);
 			else
 				encryptionKey->GenerateKeys ();
@@ -945,7 +966,7 @@ namespace client
 				m_StandardEncryptionKey.reset (encryptionKey);
 		}
 
-		if (isPublic)
+		if (IsPublic ())
 			LogPrint (eLogInfo, "Destination: Local address ", GetIdentHash().ToBase32 (), " created");
 
 		try
@@ -958,7 +979,7 @@ namespace client
 					m_StreamingAckDelay = std::stoi(it->second);
 				it = params->find (I2CP_PARAM_STREAMING_ANSWER_PINGS);
 				if (it != params->end ())
-					i2p::config::GetOption (it->second, m_IsStreamingAnswerPings);
+					m_IsStreamingAnswerPings = (it->second == "true");
 
 				if (GetLeaseSetType () == i2p::data::NETDB_STORE_TYPE_ENCRYPTED_LEASESET2)
 				{
@@ -1075,7 +1096,13 @@ namespace client
 		}
 		auto leaseSet = FindLeaseSet (dest);
 		if (leaseSet)
-			streamRequestComplete(CreateStream (leaseSet, port));
+		{	
+			auto stream = CreateStream (leaseSet, port);
+			GetService ().post ([streamRequestComplete, stream]() 
+				{                
+					streamRequestComplete(stream);
+				});
+		}	
 		else
 		{
 			auto s = GetSharedFromThis ();
@@ -1108,6 +1135,35 @@ namespace client
 			});
 	}
 
+	template<typename Dest>	
+	std::shared_ptr<i2p::stream::Stream> ClientDestination::CreateStreamSync (const Dest& dest, int port) 
+	{
+		std::shared_ptr<i2p::stream::Stream> stream;
+		std::condition_variable streamRequestComplete;
+		std::mutex streamRequestCompleteMutex;
+		std::unique_lock<std::mutex> l(streamRequestCompleteMutex);
+		CreateStream (
+			[&streamRequestComplete, &streamRequestCompleteMutex, &stream](std::shared_ptr<i2p::stream::Stream> s)
+		    {
+				stream = s;
+				std::unique_lock<std::mutex> l(streamRequestCompleteMutex);
+				streamRequestComplete.notify_all ();
+			},
+		    dest, port);
+		streamRequestComplete.wait (l);
+		return stream;
+	}	
+
+	std::shared_ptr<i2p::stream::Stream> ClientDestination::CreateStream (const i2p::data::IdentHash& dest, int port) 
+	{
+		return CreateStreamSync (dest, port);
+	}	
+
+	std::shared_ptr<i2p::stream::Stream> ClientDestination::CreateStream (std::shared_ptr<const i2p::data::BlindedPublicKey> dest, int port)
+	{
+		return CreateStreamSync (dest, port);
+	}	
+		
 	std::shared_ptr<i2p::stream::Stream> ClientDestination::CreateStream (std::shared_ptr<const i2p::data::LeaseSet> remote, int port)
 	{
 		if (m_StreamingDestination)

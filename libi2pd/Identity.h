@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2021, The PurpleI2P Project
+* Copyright (c) 2013-2022, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -120,7 +120,7 @@ namespace data
 			CryptoKeyType GetCryptoKeyType () const;
 			void DropVerifier () const; // to save memory
 
-  			bool operator == (const IdentityEx & other) const { return GetIdentHash() == other.GetIdentHash(); }
+			bool operator == (const IdentityEx & other) const { return GetIdentHash() == other.GetIdentHash(); }
 			void RecalculateIdentHash(uint8_t * buff=nullptr);
 
 			static i2p::crypto::Verifier * CreateVerifier (SigningKeyType keyType);
@@ -171,7 +171,7 @@ namespace data
 			std::shared_ptr<i2p::crypto::CryptoKeyDecryptor> CreateDecryptor (const uint8_t * key) const;
 
 			static std::shared_ptr<i2p::crypto::CryptoKeyDecryptor> CreateDecryptor (CryptoKeyType cryptoType, const uint8_t * key);
-			static PrivateKeys CreateRandomKeys (SigningKeyType type = SIGNING_KEY_TYPE_DSA_SHA1, CryptoKeyType cryptoType = CRYPTO_KEY_TYPE_ELGAMAL);
+			static PrivateKeys CreateRandomKeys (SigningKeyType type = SIGNING_KEY_TYPE_DSA_SHA1, CryptoKeyType cryptoType = CRYPTO_KEY_TYPE_ELGAMAL, bool isDestination = false);
 			static void GenerateSigningKeyPair (SigningKeyType type, uint8_t * priv, uint8_t * pub);
 			static void GenerateCryptoKeyPair (CryptoKeyType type, uint8_t * priv, uint8_t * pub); // priv and pub are 256 bytes long
 			static i2p::crypto::Signer * CreateSigner (SigningKeyType keyType, const uint8_t * priv);
@@ -222,7 +222,7 @@ namespace data
 			RoutingDestination () {};
 			virtual ~RoutingDestination () {};
 
-			virtual std::shared_ptr<const IdentityEx> GetIdentity ()  const = 0;
+			virtual std::shared_ptr<const IdentityEx> GetIdentity () const = 0;
 			virtual void Encrypt (const uint8_t * data, uint8_t * encrypted) const = 0; // encrypt data for
 			virtual bool IsDestination () const = 0; // for garlic
 

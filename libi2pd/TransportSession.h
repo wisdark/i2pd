@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2020, The PurpleI2P Project
+* Copyright (c) 2013-2022, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -24,6 +24,10 @@ namespace i2p
 {
 namespace transport
 {
+	const size_t IPV4_HEADER_SIZE = 20;
+	const size_t IPV6_HEADER_SIZE = 40;
+	const size_t UDP_HEADER_SIZE = 8;
+
 	class SignedData
 	{
 		public:
@@ -33,6 +37,12 @@ namespace transport
 			{
 				m_Stream << other.m_Stream.rdbuf ();
 			}
+
+			void Reset ()
+			{
+				m_Stream.str("");
+			}
+
 			void Insert (const uint8_t * buf, size_t len)
 			{
 				m_Stream.write ((char *)buf, len);
@@ -69,6 +79,7 @@ namespace transport
 			{
 				if (router)
 					m_RemoteIdentity = router->GetRouterIdentity ();
+				m_CreationTime = m_LastActivityTimestamp;
 			}
 
 			virtual ~TransportSession () {};
@@ -96,7 +107,11 @@ namespace transport
 			bool IsTerminationTimeoutExpired (uint64_t ts) const
 			{ return ts >= m_LastActivityTimestamp + GetTerminationTimeout (); };
 
-			virtual void SendLocalRouterInfo () { SendI2NPMessages ({ CreateDatabaseStoreMsg () }); };
+			uint32_t GetCreationTime () const { return m_CreationTime; };
+			void SetCreationTime (uint32_t ts) { m_CreationTime = ts; }; // for introducers
+
+			virtual uint32_t GetRelayTag () const { return 0; };
+			virtual void SendLocalRouterInfo (bool update = false) { SendI2NPMessages ({ CreateDatabaseStoreMsg () }); };
 			virtual void SendI2NPMessages (const std::vector<std::shared_ptr<I2NPMessage> >& msgs) = 0;
 
 		protected:
@@ -107,7 +122,17 @@ namespace transport
 			bool m_IsOutgoing;
 			int m_TerminationTimeout;
 			uint64_t m_LastActivityTimestamp;
+			uint32_t m_CreationTime; // seconds since epoch
 	};
+
+	// SOCKS5 proxy
+	const uint8_t SOCKS5_VER = 0x05;
+	const uint8_t SOCKS5_CMD_CONNECT = 0x01;
+	const uint8_t SOCKS5_CMD_UDP_ASSOCIATE = 0x03;
+	const uint8_t SOCKS5_ATYP_IPV4 = 0x01;
+	const uint8_t SOCKS5_ATYP_IPV6 = 0x04;
+	const size_t SOCKS5_UDP_IPV4_REQUEST_HEADER_SIZE = 10;
+	const size_t SOCKS5_UDP_IPV6_REQUEST_HEADER_SIZE = 22;
 }
 }
 

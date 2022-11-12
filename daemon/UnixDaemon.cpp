@@ -24,6 +24,7 @@
 #include "Tunnel.h"
 #include "RouterContext.h"
 #include "ClientContext.h"
+#include "Transports.h"
 
 void handle_signal(int sig)
 {
@@ -53,6 +54,14 @@ void handle_signal(int sig)
 		break;
 		case SIGPIPE:
 			LogPrint(eLogInfo, "SIGPIPE received");
+		break;
+		case SIGTSTP:
+			LogPrint(eLogInfo, "Daemon: Got SIGTSTP, disconnecting from network...");
+			i2p::transport::transports.SetOnline(false);
+		break;
+		case SIGCONT:
+			LogPrint(eLogInfo, "Daemon: Got SIGCONT, restoring connection to network...");
+			i2p::transport::transports.SetOnline(true);
 		break;
 	}
 }
@@ -171,6 +180,9 @@ namespace i2p
 			}
 			gracefulShutdownInterval = 0; // not specified
 
+			// handle signal TSTP
+			bool handleTSTP; i2p::config::GetOption("unix.handle_sigtstp", handleTSTP);
+
 			// Signal handler
 			struct sigaction sa;
 			sa.sa_handler = handle_signal;
@@ -182,6 +194,11 @@ namespace i2p
 			sigaction(SIGTERM, &sa, 0);
 			sigaction(SIGINT, &sa, 0);
 			sigaction(SIGPIPE, &sa, 0);
+			if (handleTSTP)
+			{
+				sigaction(SIGTSTP, &sa, 0);
+				sigaction(SIGCONT, &sa, 0);
+			}
 
 			return Daemon_Singleton::start();
 		}

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2021, The PurpleI2P Project
+* Copyright (c) 2013-2022, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -709,7 +709,7 @@ namespace client
 				LogPrint (eLogWarning, "SAM: ", SAM_PARAM_CRYPTO_TYPE, "error: ", ex.what ());
 			}
 		}
-		auto keys = i2p::data::PrivateKeys::CreateRandomKeys (signatureType, cryptoType);
+		auto keys = i2p::data::PrivateKeys::CreateRandomKeys (signatureType, cryptoType, true);
 #ifdef _MSC_VER
 		size_t l = sprintf_s (m_Buffer, SAM_SOCKET_BUFFER_SIZE, SAM_DEST_REPLY,
 			keys.GetPublic ()->ToBase64 ().c_str (), keys.ToBase64 ().c_str ());
@@ -1078,7 +1078,7 @@ namespace client
 			auto s = shared_from_this ();
 			newSocket->GetSocket ().async_connect (ep,
 				[s, newSocket, stream](const boost::system::error_code& ecode)
-			    {
+				{
 					if (!ecode)
 					{
 						s->m_Owner.AddSocket (newSocket);
@@ -1446,8 +1446,8 @@ namespace client
 	void SAMBridge::SendTo (const std::vector<boost::asio::const_buffer>& bufs, const boost::asio::ip::udp::endpoint& ep)
 	{
 		m_DatagramSocket.send_to (bufs, ep);
-	}	
-		
+	}
+
 	void SAMBridge::ReceiveDatagram ()
 	{
 		m_DatagramSocket.async_receive_from (
@@ -1478,14 +1478,21 @@ namespace client
 						auto session = FindSession (sessionID);
 						if (session)
 						{
-							i2p::data::IdentityEx dest;
-							dest.FromBase64 (destination);
-							if (session->Type == eSAMSessionTypeDatagram)
-								session->GetLocalDestination ()->GetDatagramDestination ()->
-									SendDatagramTo ((uint8_t *)eol, payloadLen, dest.GetIdentHash ());
-							else // raw
-								session->GetLocalDestination ()->GetDatagramDestination ()->
-									SendRawDatagramTo ((uint8_t *)eol, payloadLen, dest.GetIdentHash ());
+							auto localDest = session->GetLocalDestination ();
+							auto datagramDest = localDest ? localDest->GetDatagramDestination () : nullptr;
+							if (datagramDest)
+							{
+								i2p::data::IdentityEx dest;
+								dest.FromBase64 (destination);
+								if (session->Type == eSAMSessionTypeDatagram)
+									datagramDest->SendDatagramTo ((uint8_t *)eol, payloadLen, dest.GetIdentHash ());
+								else if (session->Type == eSAMSessionTypeRaw)
+									datagramDest->SendRawDatagramTo ((uint8_t *)eol, payloadLen, dest.GetIdentHash ());
+								else
+									LogPrint (eLogError, "SAM: Unexpected session type ", (int)session->Type, "for session ", sessionID);
+							}
+							else
+								LogPrint (eLogError, "SAM: Datagram destination is not set for session ", sessionID);
 						}
 						else
 							LogPrint (eLogError, "SAM: Session ", sessionID, " not found");

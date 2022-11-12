@@ -33,26 +33,27 @@ namespace data
 	{
 		if (len > size ()) len = size ();
 		memcpy (data (), buf, len);
-	}		
-	
+	}
+
 	RouterInfo::RouterInfo (): m_Buffer (nullptr)
 	{
 		m_Addresses = boost::make_shared<Addresses>(); // create empty list
 	}
 
 	RouterInfo::RouterInfo (const std::string& fullPath):
-		m_IsUpdated (false), m_IsUnreachable (false), 
-		m_SupportedTransports (0),m_ReachableTransports (0), 
+		m_FamilyID (0), m_IsUpdated (false), m_IsUnreachable (false),
+		m_SupportedTransports (0),m_ReachableTransports (0),
 		m_Caps (0), m_Version (0)
 	{
 		m_Addresses = boost::make_shared<Addresses>(); // create empty list
-		m_Buffer = netdb.NewRouterInfoBuffer ();
+		m_Buffer = NewBuffer (); // always RouterInfo's
 		ReadFromFile (fullPath);
 	}
 
 	RouterInfo::RouterInfo (std::shared_ptr<Buffer>&& buf, size_t len):
-		m_IsUpdated (true), m_IsUnreachable (false), m_SupportedTransports (0),
-		m_ReachableTransports (0), m_Caps (0), m_Version (0)
+		m_FamilyID (0), m_IsUpdated (true), m_IsUnreachable (false),
+		m_SupportedTransports (0), m_ReachableTransports (0),
+		m_Caps (0), m_Version (0)
 	{
 		if (len <= MAX_RI_BUFFER_SIZE)
 		{
@@ -67,12 +68,12 @@ namespace data
 			m_Buffer = nullptr;
 			m_IsUnreachable = true;
 		}
-	}	
-		
+	}
+
 	RouterInfo::RouterInfo (const uint8_t * buf, size_t len):
 		RouterInfo (std::make_shared<Buffer> (buf, len), len)
 	{
-	}		
+	}
 
 	RouterInfo::~RouterInfo ()
 	{
@@ -134,7 +135,7 @@ namespace data
 			}
 			s.seekg(0, std::ios::beg);
 			if (!m_Buffer)
-				m_Buffer = netdb.NewRouterInfoBuffer ();
+				m_Buffer = NewBuffer ();
 			s.read((char *)m_Buffer->data (), m_BufferLen);
 		}
 		else
@@ -159,7 +160,7 @@ namespace data
 		{
 			m_IsUnreachable = true;
 			return;
-		}	
+		}
 		m_RouterIdentity = std::make_shared<IdentityEx>(m_Buffer->data (), m_BufferLen);
 		size_t identityLen = m_RouterIdentity->GetFullLen ();
 		if (identityLen >= m_BufferLen)
@@ -216,14 +217,15 @@ namespace data
 			uint8_t cost; // ignore
 			s.read ((char *)&cost, sizeof (cost));
 			s.read ((char *)&address->date, sizeof (address->date));
-			bool isHost = false, isIntroKey = false, isStaticKey = false;
+			bool isHost = false, isIntroKey = false, isStaticKey = false, isV2 = false;
+			Tag<32> iV2; // for 'i' field in SSU, TODO: remove later
 			char transportStyle[6];
 			ReadString (transportStyle, 6, s);
 			if (!strncmp (transportStyle, "NTCP", 4)) // NTCP or NTCP2
 				address->transportStyle = eTransportNTCP;
-			else if (!strcmp (transportStyle, "SSU"))
+			else if (!strncmp (transportStyle, "SSU", 3)) // SSU or SSU2
 			{
-				address->transportStyle = eTransportSSU;
+				address->transportStyle = (transportStyle[3] == '2') ? eTransportSSU2 : eTransportSSU;
 				address->ssu.reset (new SSUExt ());
 				address->ssu->mtu = 0;
 			}
@@ -234,6 +236,12 @@ namespace data
 			uint16_t size, r = 0;
 			s.read ((char *)&size, sizeof (size)); if (!s) return;
 			size = be16toh (size);
+			if (address->transportStyle == eTransportUnknown)
+			{
+				// skip unknown address
+				s.seekg (size, std::ios_base::cur);
+				if (s) continue; else return;
+			}
 			while (r < size)
 			{
 				char key[255], value[255];
@@ -249,32 +257,64 @@ namespace data
 					if (!ecode && !address->host.is_unspecified ()) isHost = true;
 				}
 				else if (!strcmp (key, "port"))
-					address->port = boost::lexical_cast<int>(value);
+				{
+					try
+					{
+						address->port = boost::lexical_cast<int>(value);
+					}
+					catch (std::exception& ex)
+					{
+						LogPrint (eLogWarning, "RouterInfo: 'port' exception ", ex.what ());
+					}
+				}
 				else if (!strcmp (key, "mtu"))
 				{
 					if (address->ssu)
-						address->ssu->mtu = boost::lexical_cast<int>(value);
+					{
+						try
+						{
+							address->ssu->mtu = boost::lexical_cast<int>(value);
+						}
+						catch (std::exception& ex)
+						{
+							LogPrint (eLogWarning, "RouterInfo: 'mtu' exception ", ex.what ());
+						}
+					}
 					else
-						LogPrint (eLogWarning, "RouterInfo: Unexpected field 'mtu' for NTCP");
+						LogPrint (eLogWarning, "RouterInfo: Unexpected field 'mtu' for NTCP2");
 				}
 				else if (!strcmp (key, "key"))
 				{
 					if (address->ssu)
 						isIntroKey = (Base64ToByteStream (value, strlen (value), address->i, 32) == 32);
 					else
-						LogPrint (eLogWarning, "RouterInfo: Unexpected field 'key' for NTCP");
+						LogPrint (eLogWarning, "RouterInfo: Unexpected field 'key' for NTCP2");
 				}
 				else if (!strcmp (key, "caps"))
 					address->caps = ExtractAddressCaps (value);
-				else if (!strcmp (key, "s")) // ntcp2 static key
+				else if (!strcmp (key, "s")) // ntcp2 or ssu2 static key
 				{
 					Base64ToByteStream (value, strlen (value), address->s, 32);
 					isStaticKey = true;
 				}
-				else if (!strcmp (key, "i")) // ntcp2 iv
+				else if (!strcmp (key, "i")) // ntcp2 iv or ssu2 intro
 				{
-					Base64ToByteStream (value, strlen (value), address->i, 16);
-					address->published = true; // presence if "i" means "published"
+					if (address->IsNTCP2 ())
+					{
+						Base64ToByteStream (value, strlen (value), address->i, 16);
+						address->published = true; // presence of "i" means "published" NTCP2
+					}
+					else if (address->IsSSU2 ())
+						Base64ToByteStream (value, strlen (value), address->i, 32);
+					else
+						Base64ToByteStream (value, strlen (value), iV2, 32);
+				}
+				else if (!strcmp (key, "v"))
+				{
+					if (!strcmp (value, "2"))
+						isV2 = true;
+					else
+						LogPrint (eLogWarning, "RouterInfo: Unexpected value ", value, " for v");
 				}
 				else if (key[0] == 'i')
 				{
@@ -305,13 +345,40 @@ namespace data
 						introducer.iHost = boost::asio::ip::address::from_string (value, ecode);
 					}
 					else if (!strcmp (key, "iport"))
-						introducer.iPort = boost::lexical_cast<int>(value);
+					{
+						try
+						{
+							introducer.iPort = boost::lexical_cast<int>(value);
+						}
+						catch (std::exception& ex)
+						{
+							LogPrint (eLogWarning, "RouterInfo: 'iport' exception ", ex.what ());
+						}
+					}
 					else if (!strcmp (key, "itag"))
-						introducer.iTag = boost::lexical_cast<uint32_t>(value);
-					else if (!strcmp (key, "ikey"))
+					{
+						try
+						{
+							introducer.iTag = boost::lexical_cast<uint32_t>(value);
+						}
+						catch (std::exception& ex)
+						{
+							LogPrint (eLogWarning, "RouterInfo: 'itag' exception ", ex.what ());
+						}
+					}
+					else if (!strcmp (key, "ikey") || !strcmp (key, "ih"))
 						Base64ToByteStream (value, strlen (value), introducer.iKey, 32);
 					else if (!strcmp (key, "iexp"))
-						introducer.iExp = boost::lexical_cast<uint32_t>(value);
+					{
+						try
+						{
+							introducer.iExp = boost::lexical_cast<uint32_t>(value);
+						}
+						catch (std::exception& ex)
+						{
+							LogPrint (eLogWarning, "RouterInfo: 'iexp' exception ", ex.what ());
+						}
+					}
 				}
 				if (!s) return;
 			}
@@ -322,7 +389,7 @@ namespace data
 					if (isHost)
 					{
 						if (address->host.is_v6 ())
-							supportedTransports |= (i2p::util::net::IsYggdrasilAddress (address->host) ? eNTCP2V6Mesh :  eNTCP2V6);
+							supportedTransports |= (i2p::util::net::IsYggdrasilAddress (address->host) ? eNTCP2V6Mesh : eNTCP2V6);
 						else
 							supportedTransports |= eNTCP2V4;
 						m_ReachableTransports |= supportedTransports;
@@ -344,7 +411,7 @@ namespace data
 				if (isIntroKey)
 				{
 					if (isHost)
-						supportedTransports |= address->host.is_v4 () ? eSSUV4 :  eSSUV6;
+						supportedTransports |= address->host.is_v4 () ? eSSUV4 : eSSUV6;
 					else if (address->caps & AddressCaps::eV6)
 					{
 						supportedTransports |= eSSUV6;
@@ -361,10 +428,13 @@ namespace data
 						{
 							if (!it.iExp) it.iExp = m_Timestamp/1000 + NETDB_INTRODUCEE_EXPIRATION_TIMEOUT;
 							if (ts <= it.iExp && it.iPort > 0 &&
-							    ((it.iHost.is_v4 () && address->IsV4 ()) || (it.iHost.is_v6 () && address->IsV6 ())))
+								((it.iHost.is_v4 () && address->IsV4 ()) || (it.iHost.is_v6 () && address->IsV6 ())))
 								numValid++;
 							else
+							{
 								it.iPort = 0;
+								if (isV2) numValid++;
+							}
 						}
 						if (numValid)
 							m_ReachableTransports |= supportedTransports;
@@ -378,7 +448,59 @@ namespace data
 					}
 				}
 			}
-			if (supportedTransports) 
+			if (address->transportStyle == eTransportSSU2 || (isV2 && address->transportStyle == eTransportSSU))
+			{
+				if (address->IsV4 ()) supportedTransports |= eSSU2V4;
+				if (address->IsV6 ()) supportedTransports |= eSSU2V6;
+				if (address->port)
+				{
+					if (address->host.is_v4 ()) m_ReachableTransports |= eSSU2V4;
+					if (address->host.is_v6 ()) m_ReachableTransports |= eSSU2V6;
+				}
+				if (address->transportStyle == eTransportSSU2)
+				{
+					if (address->port) address->published = true;
+					if (address->ssu && !address->ssu->introducers.empty ())
+					{
+						// exclude invalid introducers
+						uint32_t ts = i2p::util::GetSecondsSinceEpoch ();
+						int numValid = 0;
+						for (auto& it: address->ssu->introducers)
+						{
+							if (it.iTag && ts <= it.iExp)
+								numValid++;
+							else
+								it.iTag = 0;
+						}
+						if (numValid)
+							m_ReachableTransports |= supportedTransports;
+						else
+							address->ssu->introducers.resize (0);
+					}
+				}
+				else
+				{
+					// create additional SSU2 address. TODO: remove later
+					auto ssu2addr = std::make_shared<Address> ();
+					ssu2addr->transportStyle = eTransportSSU2;
+					ssu2addr->host = address->host; ssu2addr->port = address->port;
+					ssu2addr->s = address->s; ssu2addr->i = iV2;
+					ssu2addr->date = address->date; ssu2addr->caps = address->caps;
+					ssu2addr->published = address->published;
+					ssu2addr->ssu.reset (new SSUExt ()); ssu2addr->ssu->mtu = address->ssu->mtu;
+					uint32_t ts = i2p::util::GetSecondsSinceEpoch ();
+					if (!address->ssu->introducers.empty ())
+					{
+						for (const auto& introducer: address->ssu->introducers)
+							if (!introducer.iPort && introducer.iHost.is_unspecified () && ts < introducer.iExp) // SSU2
+								ssu2addr->ssu->introducers.push_back (introducer);
+						if (!ssu2addr->ssu->introducers.empty ())
+							m_ReachableTransports |= supportedTransports;
+					}
+					addresses->push_back(ssu2addr);
+				}
+			}
+			if (supportedTransports)
 			{
 				if (!(m_SupportedTransports & supportedTransports)) // avoid duplicates
 					addresses->push_back(address);
@@ -397,6 +519,7 @@ namespace data
 		// read properties
 		m_Version = 0;
 		bool isNetId = false;
+		std::string family;
 		uint16_t size, r = 0;
 		s.read ((char *)&size, sizeof (size)); if (!s) return;
 		size = be16toh (size);
@@ -433,24 +556,23 @@ namespace data
 			{
 				isNetId = true;
 				if (atoi (value) != i2p::context.GetNetID ())
-				{	
+				{
 					LogPrint (eLogError, "RouterInfo: Unexpected ", ROUTER_INFO_PROPERTY_NETID, "=", value);
 					m_IsUnreachable = true;
-				}	
+				}
 			}
 			// family
 			else if (!strcmp (key, ROUTER_INFO_PROPERTY_FAMILY))
 			{
-				m_Family = value;
-				boost::to_lower (m_Family);
+				family = value;
+				boost::to_lower (family);
 			}
 			else if (!strcmp (key, ROUTER_INFO_PROPERTY_FAMILY_SIG))
 			{
-				if (!netdb.GetFamilies ().VerifyFamily (m_Family, GetIdentHash (), value))
-				{
-					LogPrint (eLogWarning, "RouterInfo: Family signature verification failed");
-					m_Family.clear ();
-				}
+				if (netdb.GetFamilies ().VerifyFamily (family, GetIdentHash (), value))
+					m_FamilyID = netdb.GetFamilies ().GetFamilyID (family);
+				else
+					LogPrint (eLogWarning, "RouterInfo: Family ", family, " signature verification failed");
 			}
 
 			if (!s) return;
@@ -460,9 +582,9 @@ namespace data
 			SetUnreachable (true);
 	}
 
-	bool RouterInfo::IsFamily(const std::string & fam) const
+	bool RouterInfo::IsFamily (FamilyID famid) const
 	{
-		return m_Family == fam;
+		return m_FamilyID == famid;
 	}
 
 	void RouterInfo::ExtractCaps (const char * value)
@@ -627,12 +749,55 @@ namespace data
 		m_Addresses->push_back(std::move(addr));
 	}
 
+	void RouterInfo::AddSSU2Address (const uint8_t * staticKey, const uint8_t * introKey, uint8_t caps)
+	{
+		auto addr = std::make_shared<Address>();
+		addr->transportStyle = eTransportSSU2;
+		addr->port = 0;
+		addr->caps = caps;
+		addr->date = 0;
+		addr->ssu.reset (new SSUExt ());
+		addr->ssu->mtu = 0;
+		memcpy (addr->s, staticKey, 32);
+		memcpy (addr->i, introKey, 32);
+		if (addr->IsV4 ()) m_SupportedTransports |= eSSU2V4;
+		if (addr->IsV6 ()) m_SupportedTransports |= eSSU2V6;
+		m_Addresses->push_back(std::move(addr));
+	}
+
+	void RouterInfo::AddSSU2Address (const uint8_t * staticKey, const uint8_t * introKey,
+		const boost::asio::ip::address& host, int port)
+	{
+		auto addr = std::make_shared<Address>();
+		addr->transportStyle = eTransportSSU2;
+		addr->host = host;
+		addr->port = port;
+		addr->published = true;
+		addr->caps = i2p::data::RouterInfo::eSSUTesting | i2p::data::RouterInfo::eSSUIntroducer; // BC;
+		addr->date = 0;
+		addr->ssu.reset (new SSUExt ());
+		addr->ssu->mtu = 0;
+		memcpy (addr->s, staticKey, 32);
+		memcpy (addr->i, introKey, 32);
+		if (addr->IsV4 ())
+		{
+			m_SupportedTransports |= eSSU2V4;
+			m_ReachableTransports |= eSSU2V4;
+		}
+		if (addr->IsV6 ())
+		{
+			m_SupportedTransports |= eSSU2V6;
+			m_ReachableTransports |= eSSU2V6;
+		}
+		m_Addresses->push_back(std::move(addr));
+	}
+
 	bool RouterInfo::AddIntroducer (const Introducer& introducer)
 	{
 		for (auto& addr : *m_Addresses)
 		{
 			if (addr->transportStyle == eTransportSSU &&
-			   ((addr->IsV4 () && introducer.iHost.is_v4 ()) || (addr->IsV6 () && introducer.iHost.is_v6 ())))
+				((addr->IsV4 () && introducer.iHost.is_v4 ()) || (addr->IsV6 () && introducer.iHost.is_v6 ())))
 			{
 				for (auto& intro: addr->ssu->introducers)
 					if (intro.iTag == introducer.iTag) return false; // already presented
@@ -649,7 +814,7 @@ namespace data
 		for (auto& addr: *m_Addresses)
 		{
 			if (addr->transportStyle == eTransportSSU &&
-			   ((addr->IsV4 () && e.address ().is_v4 ()) || (addr->IsV6 () && e.address ().is_v6 ())))
+				((addr->IsV4 () && e.address ().is_v4 ()) || (addr->IsV6 () && e.address ().is_v6 ())))
 			{
 				for (auto it = addr->ssu->introducers.begin (); it != addr->ssu->introducers.end (); ++it)
 					if (boost::asio::ip::udp::endpoint (it->iHost, it->iPort) == e)
@@ -672,11 +837,6 @@ namespace data
 			return m_SupportedTransports & (eSSUV4 | eSSUV6);
 	}
 
-	bool RouterInfo::IsSSUV6 () const
-	{
-		return m_SupportedTransports & eSSUV6;
-	}
-
 	bool RouterInfo::IsNTCP2 (bool v4only) const
 	{
 		if (v4only)
@@ -685,25 +845,6 @@ namespace data
 			return m_SupportedTransports & (eNTCP2V4 | eNTCP2V6);
 	}
 
-	bool RouterInfo::IsNTCP2V6 () const
-	{
-		return m_SupportedTransports & eNTCP2V6;
-	}
-
-	bool RouterInfo::IsV6 () const
-	{
-		return m_SupportedTransports & (eSSUV6 | eNTCP2V6);
-	}
-
-	bool RouterInfo::IsV4 () const
-	{
-		return m_SupportedTransports & (eSSUV4 | eNTCP2V4);
-	}
-
-	bool RouterInfo::IsMesh () const
-	{
-		return m_SupportedTransports & eNTCP2V6Mesh;
-	}
 
 	void RouterInfo::EnableV6 ()
 	{
@@ -820,6 +961,39 @@ namespace data
 			});
 	}
 
+	std::shared_ptr<const RouterInfo::Address> RouterInfo::GetSSU2V4Address () const
+	{
+		return GetAddress (
+			[](std::shared_ptr<const RouterInfo::Address> address)->bool
+			{
+				return (address->transportStyle == eTransportSSU2) && address->IsV4();
+			});
+	}
+
+	std::shared_ptr<const RouterInfo::Address> RouterInfo::GetSSU2V6Address () const
+	{
+		return GetAddress (
+			[](std::shared_ptr<const RouterInfo::Address> address)->bool
+			{
+				return (address->transportStyle == eTransportSSU2) && address->IsV6();
+			});
+	}
+
+	std::shared_ptr<const RouterInfo::Address> RouterInfo::GetSSU2Address (bool v4) const
+	{
+		if (v4)
+		{
+			if (m_SupportedTransports & eSSU2V4)
+				return GetSSU2V4Address ();
+		}
+		else
+		{
+			if (m_SupportedTransports & eSSU2V6)
+				return GetSSU2V6Address ();
+		}
+		return nullptr;
+	}
+
 	template<typename Filter>
 	std::shared_ptr<const RouterInfo::Address> RouterInfo::GetAddress (Filter filter) const
 	{
@@ -842,6 +1016,17 @@ namespace data
 			[key](std::shared_ptr<const RouterInfo::Address> address)->bool
 			{
 				return address->IsNTCP2 () && !memcmp (address->s, key, 32);
+			});
+	}
+
+	std::shared_ptr<const RouterInfo::Address> RouterInfo::GetSSU2AddressWithStaticKey (const uint8_t * key, bool isV6) const
+	{
+		if (!key) return nullptr;
+		return GetAddress (
+			[key, isV6](std::shared_ptr<const RouterInfo::Address> address)->bool
+			{
+				return address->IsSSU2 () && !memcmp (address->s, key, 32) &&
+					((isV6 && address->IsV6 ()) || (!isV6 && address->IsV4 ()));
 			});
 	}
 
@@ -905,6 +1090,17 @@ namespace data
 			});
 	}
 
+	bool RouterInfo::IsSSU2PeerTesting (bool v4) const
+	{
+		if (!(m_SupportedTransports & (v4 ? eSSU2V4 : eSSU2V6))) return false;
+		return (bool)GetAddress (
+			[v4](std::shared_ptr<const RouterInfo::Address> address)->bool
+			{
+				return (address->IsSSU2 ()) && address->IsPeerTesting () &&
+					((v4 && address->IsV4 ()) || (!v4 && address->IsV6 ())) && address->IsReachableSSU ();
+			});
+	}
+
 	bool RouterInfo::IsIntroducer (bool v4) const
 	{
 		if (!(m_SupportedTransports & (v4 ? eSSUV4 : eSSUV6))) return false;
@@ -916,12 +1112,23 @@ namespace data
 			});
 	}
 
+	bool RouterInfo::IsSSU2Introducer (bool v4) const
+	{
+		if (!(m_SupportedTransports & (v4 ? eSSU2V4 : eSSU2V6))) return false;
+		return (bool)GetAddress (
+			[v4](std::shared_ptr<const RouterInfo::Address> address)->bool
+			{
+				return (address->IsSSU2 ()) && address->IsIntroducer () &&
+					((v4 && address->IsV4 ()) || (!v4 && address->IsV6 ())) && !address->host.is_unspecified ();
+			});
+	}
+
 	void RouterInfo::SetUnreachableAddressesTransportCaps (uint8_t transports)
 	{
 		for (auto& addr: *m_Addresses)
 		{
 			// TODO: implement SSU
-			if (addr->transportStyle == eTransportNTCP && !addr->IsPublishedNTCP2 ())
+			if (!addr->published && (addr->transportStyle == eTransportNTCP || addr->transportStyle == eTransportSSU2))
 			{
 				addr->caps &= ~(eV4 | eV6);
 				addr->caps |= transports;
@@ -936,20 +1143,28 @@ namespace data
 		for (const auto& addr: *m_Addresses)
 		{
 			uint8_t transports = 0;
-			if (addr->transportStyle == eTransportNTCP)
+			switch (addr->transportStyle)
 			{
-				if (addr->IsV4 ()) transports |= eNTCP2V4;
-				if (addr->IsV6 ())
-					transports |= (i2p::util::net::IsYggdrasilAddress (addr->host) ? eNTCP2V6Mesh : eNTCP2V6);
-				if (addr->IsPublishedNTCP2 ())
-					m_ReachableTransports |= transports;
-			}
-			else if (addr->transportStyle == eTransportSSU)
-			{
-				if (addr->IsV4 ()) transports |= eSSUV4;
-				if (addr->IsV6 ()) transports |= eSSUV6;
-				if (addr->IsReachableSSU ())
-					m_ReachableTransports |= transports;
+				case eTransportNTCP:
+					if (addr->IsV4 ()) transports |= eNTCP2V4;
+					if (addr->IsV6 ())
+						transports |= (i2p::util::net::IsYggdrasilAddress (addr->host) ? eNTCP2V6Mesh : eNTCP2V6);
+					if (addr->IsPublishedNTCP2 ())
+						m_ReachableTransports |= transports;
+				break;
+				case eTransportSSU:
+					if (addr->IsV4 ()) transports |= eSSUV4;
+					if (addr->IsV6 ()) transports |= eSSUV6;
+					if (addr->IsReachableSSU ())
+						m_ReachableTransports |= transports;
+				break;
+				case eTransportSSU2:
+					if (addr->IsV4 ()) transports |= eSSU2V4;
+					if (addr->IsV6 ()) transports |= eSSU2V6;
+					if (addr->IsReachableSSU ())
+						m_ReachableTransports |= transports;
+				break;
+				default: ;
 			}
 			m_SupportedTransports |= transports;
 		}
@@ -958,16 +1173,21 @@ namespace data
 	void RouterInfo::UpdateBuffer (const uint8_t * buf, size_t len)
 	{
 		if (!m_Buffer)
-			m_Buffer = netdb.NewRouterInfoBuffer ();
+			m_Buffer = NewBuffer ();
 		if (len > m_Buffer->size ()) len = m_Buffer->size ();
 		memcpy (m_Buffer->data (), buf, len);
 		m_BufferLen = len;
-	}	
+	}
+
+	std::shared_ptr<RouterInfo::Buffer> RouterInfo::NewBuffer () const
+	{
+		return netdb.NewRouterInfoBuffer ();
+	}
 
 	void RouterInfo::RefreshTimestamp ()
 	{
-		m_Timestamp = i2p::util::GetMillisecondsSinceEpoch (); 
-	}	
+		m_Timestamp = i2p::util::GetMillisecondsSinceEpoch ();
+	}
 
 	void LocalRouterInfo::CreateBuffer (const PrivateKeys& privateKeys)
 	{
@@ -988,13 +1208,13 @@ namespace data
 		}
 		else
 			LogPrint (eLogError, "RouterInfo: Our RouterInfo is too long ", len + signatureLen);
-	}	
+	}
 
 	void LocalRouterInfo::UpdateCaps (uint8_t caps)
 	{
 		SetCaps (caps);
 		UpdateCapsProperty ();
-	}	
+	}
 
 	void LocalRouterInfo::UpdateCapsProperty ()
 	{
@@ -1041,6 +1261,8 @@ namespace data
 				cost = address.published ? COST_NTCP2_PUBLISHED : COST_NTCP2_NON_PUBLISHED;
 			else if (address.transportStyle == eTransportSSU)
 				cost = address.published ? COST_SSU_DIRECT : COST_SSU_THROUGH_INTRODUCERS;
+			else if (address.transportStyle == eTransportSSU2)
+				cost = address.published ? COST_SSU2_DIRECT : COST_SSU2_NON_PUBLISHED;
 			s.write ((const char *)&cost, sizeof (cost));
 			s.write ((const char *)&address.date, sizeof (address.date));
 			std::stringstream properties;
@@ -1051,7 +1273,7 @@ namespace data
 				{
 					WriteString ("NTCP2", s);
 					if (address.IsPublishedNTCP2 () && !address.host.is_unspecified () && address.port)
-						 isPublished = true;
+						isPublished = true;
 					else
 					{
 						WriteString ("caps", properties);
@@ -1104,20 +1326,52 @@ namespace data
 				WriteString (caps, properties);
 				properties << ';';
 			}
+			else if (address.transportStyle == eTransportSSU2)
+			{
+				WriteString ("SSU2", s);
+				// caps
+				std::string caps;
+				if (address.published)
+				{
+					isPublished = true;
+					if (address.IsPeerTesting ()) caps += CAPS_FLAG_SSU_TESTING;
+					if (address.IsIntroducer ()) caps += CAPS_FLAG_SSU_INTRODUCER;
+				}
+				else
+				{
+					if (address.IsV4 ()) caps += CAPS_FLAG_V4;
+					if (address.IsV6 ()) caps += CAPS_FLAG_V6;
+					if (caps.empty ()) caps += CAPS_FLAG_V4;
+				}
+				if (!caps.empty ())
+				{
+					WriteString ("caps", properties);
+					properties << '=';
+					WriteString (caps, properties);
+					properties << ';';
+				}
+			}
 			else
 				WriteString ("", s);
 
-			if (isPublished)
+			if (isPublished && !address.host.is_unspecified ())
 			{
 				WriteString ("host", properties);
 				properties << '=';
 				WriteString (address.host.to_string (), properties);
 				properties << ';';
 			}
-			if (address.transportStyle == eTransportSSU)
+			if ((address.IsNTCP2 () && isPublished) || address.IsSSU2 ())
+			{
+				// publish i for NTCP2 or SSU2
+				WriteString ("i", properties); properties << '=';
+				size_t len = address.IsSSU2 () ? 32 : 16;
+				WriteString (address.i.ToBase64 (len), properties); properties << ';';
+			}
+			if (address.transportStyle == eTransportSSU || address.IsSSU2 ())
 			{
 				// write introducers if any
-				if (!address.ssu->introducers.empty())
+				if (address.ssu && !address.ssu->introducers.empty())
 				{
 					int i = 0;
 					for (const auto& introducer: address.ssu->introducers)
@@ -1131,19 +1385,25 @@ namespace data
 						}
 						i++;
 					}
-					i = 0;
-					for (const auto& introducer: address.ssu->introducers)
+					if (address.transportStyle == eTransportSSU)
 					{
-						WriteString ("ihost" + boost::lexical_cast<std::string>(i), properties);
-						properties << '=';
-						WriteString (introducer.iHost.to_string (), properties);
-						properties << ';';
-						i++;
+						i = 0;
+						for (const auto& introducer: address.ssu->introducers)
+						{
+							WriteString ("ihost" + boost::lexical_cast<std::string>(i), properties);
+							properties << '=';
+							WriteString (introducer.iHost.to_string (), properties);
+							properties << ';';
+							i++;
+						}
 					}
 					i = 0;
 					for (const auto& introducer: address.ssu->introducers)
 					{
-						WriteString ("ikey" + boost::lexical_cast<std::string>(i), properties);
+						if (address.IsSSU2 ())
+							WriteString ("ih" + boost::lexical_cast<std::string>(i), properties);
+						else
+							WriteString ("ikey" + boost::lexical_cast<std::string>(i), properties);
 						properties << '=';
 						char value[64];
 						size_t l = ByteStreamToBase64 (introducer.iKey, 32, value, 64);
@@ -1152,14 +1412,17 @@ namespace data
 						properties << ';';
 						i++;
 					}
-					i = 0;
-					for (const auto& introducer: address.ssu->introducers)
+					if (address.transportStyle == eTransportSSU)
 					{
-						WriteString ("iport" + boost::lexical_cast<std::string>(i), properties);
-						properties << '=';
-						WriteString (boost::lexical_cast<std::string>(introducer.iPort), properties);
-						properties << ';';
-						i++;
+						i = 0;
+						for (const auto& introducer: address.ssu->introducers)
+						{
+							WriteString ("iport" + boost::lexical_cast<std::string>(i), properties);
+							properties << '=';
+							WriteString (boost::lexical_cast<std::string>(introducer.iPort), properties);
+							properties << ';';
+							i++;
+						}
 					}
 					i = 0;
 					for (const auto& introducer: address.ssu->introducers)
@@ -1171,6 +1434,9 @@ namespace data
 						i++;
 					}
 				}
+			}
+			if (address.transportStyle == eTransportSSU)
+			{
 				// write intro key
 				WriteString ("key", properties);
 				properties << '=';
@@ -1179,8 +1445,11 @@ namespace data
 				value[l] = 0;
 				WriteString (value, properties);
 				properties << ';';
+			}
+			if (address.transportStyle == eTransportSSU || address.IsSSU2 ())
+			{
 				// write mtu
-				if (address.ssu->mtu)
+				if (address.ssu && address.ssu->mtu)
 				{
 					WriteString ("mtu", properties);
 					properties << '=';
@@ -1188,24 +1457,16 @@ namespace data
 					properties << ';';
 				}
 			}
-
-			if (address.IsNTCP2 () && isPublished)
-			{
-				// publish i for NTCP2
-				WriteString ("i", properties); properties << '=';
-				WriteString (address.i.ToBase64 (16), properties); properties << ';';
-			}
-
-			if (isPublished || address.ssu)
+			if ((isPublished || (address.ssu && !address.IsSSU2 ())) && address.port)
 			{
 				WriteString ("port", properties);
 				properties << '=';
 				WriteString (boost::lexical_cast<std::string>(address.port), properties);
 				properties << ';';
 			}
-			if (address.IsNTCP2 ())
+			if (address.IsNTCP2 () || address.IsSSU2 ())
 			{
-				// publish s and v for NTCP2
+				// publish s and v for NTCP2 or SSU2
 				WriteString ("s", properties); properties << '=';
 				WriteString (address.s.ToBase64 (), properties); properties << ';';
 				WriteString ("v", properties); properties << '=';
@@ -1233,7 +1494,7 @@ namespace data
 		uint16_t size = htobe16 (properties.str ().size ());
 		s.write ((char *)&size, sizeof (size));
 		s.write (properties.str ().c_str (), properties.str ().size ());
-	}	
+	}
 
 	void LocalRouterInfo::SetProperty (const std::string& key, const std::string& value)
 	{
@@ -1251,13 +1512,53 @@ namespace data
 		if (it != m_Properties.end ())
 			return it->second;
 		return "";
-	}	
+	}
 
 	void LocalRouterInfo::WriteString (const std::string& str, std::ostream& s) const
 	{
 		uint8_t len = str.size ();
 		s.write ((char *)&len, 1);
 		s.write (str.c_str (), len);
-	}	
+	}
+
+	std::shared_ptr<RouterInfo::Buffer> LocalRouterInfo::NewBuffer () const
+	{
+		return std::make_shared<Buffer> ();
+	}
+
+	bool LocalRouterInfo::AddSSU2Introducer (const Introducer& introducer, bool v4)
+	{
+		for (auto& addr : GetAddresses ())
+		{
+			if (addr->IsSSU2 () && ((v4 && addr->IsV4 ()) || (!v4 && addr->IsV6 ())))
+			{
+				for (auto& intro: addr->ssu->introducers)
+					if (intro.iTag == introducer.iTag) return false; // already presented
+				addr->ssu->introducers.push_back (introducer);
+				SetReachableTransports (GetReachableTransports () | ((addr->IsV4 () ? eSSU2V4 : eSSU2V6)));
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool LocalRouterInfo::RemoveSSU2Introducer (const IdentHash& h, bool v4)
+	{
+		for (auto& addr: GetAddresses ())
+		{
+			if (addr->IsSSU2 () && ((v4 && addr->IsV4 ()) || (!v4 && addr->IsV6 ())))
+			{
+				for (auto it = addr->ssu->introducers.begin (); it != addr->ssu->introducers.end (); ++it)
+					if (h == it->iKey)
+					{
+						addr->ssu->introducers.erase (it);
+						if (addr->ssu->introducers.empty ())
+							SetReachableTransports (GetReachableTransports () & ~(addr->IsV4 () ? eSSU2V4 : eSSU2V6));
+						return true;
+					}
+			}
+		}
+		return false;
+	}
 }
 }

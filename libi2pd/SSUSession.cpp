@@ -41,7 +41,6 @@ namespace transport
 				i2p::context.GetRouterInfo ().GetSSUAddress (true);
 			if (address) m_IntroKey = address->i;
 		}
-		m_CreationTime = i2p::util::GetSecondsSinceEpoch ();
 	}
 
 	SSUSession::~SSUSession ()
@@ -296,8 +295,8 @@ namespace transport
 					{
 						LogPrint (eLogWarning, "SSU: Clock adjusted by ", -offset, " seconds");
 						i2p::util::AdjustTimeOffset (-offset);
-					}	
-				}	
+					}
+				}
 				else if (std::abs (offset) > SSU_CLOCK_SKEW)
 				{
 					LogPrint (eLogError, "SSU: Clock skew detected ", offset, ". Check your clock");
@@ -388,11 +387,11 @@ namespace transport
 		// fill extended options, 3 bytes extended options don't change message size
 		bool isV4 = m_RemoteEndpoint.address ().is_v4 ();
 		if ((isV4 && i2p::context.GetStatus () == eRouterStatusOK) ||
-		    (!isV4 && i2p::context.GetStatusV6 () == eRouterStatusOK)) // we don't need relays
+			(!isV4 && i2p::context.GetStatusV6 () == eRouterStatusOK)) // we don't need relays
 		{
 			// tell out peer to now assign relay tag
 			flag = SSU_HEADER_EXTENDED_OPTIONS_INCLUDED;
-			*payload = 2; payload++; //  1 byte length
+			*payload = 2; payload++; // 1 byte length
 			uint16_t flags = 0; // clear EXTENDED_OPTIONS_FLAG_REQUEST_RELAY_TAG
 			htobe16buf (payload, flags);
 			payload += 2;
@@ -720,8 +719,8 @@ namespace transport
 				if (i2p::context.GetStatus () == eRouterStatusTesting)
 					i2p::context.SetError (eRouterErrorSymmetricNAT);
 			}
-			else if (i2p::context.GetStatus () == eRouterStatusError && i2p::context.GetError () == eRouterErrorSymmetricNAT)
-				i2p::context.SetStatus (eRouterStatusTesting);
+			else if (i2p::context.GetError () == eRouterErrorSymmetricNAT)
+				i2p::context.SetError (eRouterErrorNone);
 		}
 		uint32_t nonce = bufbe32toh (buf);
 		buf += 4; // nonce
@@ -1020,7 +1019,7 @@ namespace transport
 		for (auto it = m_RelayRequests.begin (); it != m_RelayRequests.end ();)
 		{
 			if (ts > it->second.second + SSU_CONNECT_TIMEOUT)
-				it =  m_RelayRequests.erase (it);
+				it = m_RelayRequests.erase (it);
 			else
 				++it;
 		}

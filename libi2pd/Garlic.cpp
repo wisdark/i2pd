@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2021, The PurpleI2P Project
+* Copyright (c) 2013-2022, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -293,14 +293,14 @@ namespace garlic
 		size_t size = 0;
 		if (isDestination)
 		{
-			buf[size] = eGarlicDeliveryTypeDestination << 5;//  delivery instructions flag destination
+			buf[size] = eGarlicDeliveryTypeDestination << 5;// delivery instructions flag destination
 			size++;
 			memcpy (buf + size, m_Destination->GetIdentHash (), 32);
 			size += 32;
 		}
 		else
 		{
-			buf[size] = 0;//  delivery instructions flag local
+			buf[size] = 0;// delivery instructions flag local
 			size++;
 		}
 
@@ -482,6 +482,11 @@ namespace garlic
 	{
 		AddSessionKey (key, tag);
 		return true;
+	}
+
+	void GarlicDestination::SubmitECIESx25519Key (const uint8_t * key, uint64_t tag)
+	{
+		AddECIESx25519Key (key, tag);
 	}
 
 	void GarlicDestination::HandleGarlicMessage (std::shared_ptr<I2NPMessage> msg)
@@ -739,7 +744,7 @@ namespace garlic
 				LogPrint (eLogError, "Garlic: Message is too short");
 				break;
 			}
-			buf += GetI2NPMessageLength (buf, len - offset); //  I2NP
+			buf += GetI2NPMessageLength (buf, len - offset); // I2NP
 			buf += 4; // CloveID
 			buf += 8; // Date
 			buf += 3; // Certificate
@@ -1019,7 +1024,7 @@ namespace garlic
 		uint32_t ts = i2p::util::GetSecondsSinceEpoch ();
 		for (auto it: files)
 			if (ts >= i2p::fs::GetLastUpdateTime (it) + INCOMING_TAGS_EXPIRATION_TIMEOUT)
-				 i2p::fs::Remove (it);
+				i2p::fs::Remove (it);
 	}
 
 	void GarlicDestination::HandleECIESx25519GarlicClove (const uint8_t * buf, size_t len)

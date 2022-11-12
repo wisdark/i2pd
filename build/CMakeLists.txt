@@ -17,13 +17,13 @@ option(WITH_LIBRARY         "Build library"                           ON)
 option(WITH_BINARY          "Build binary"                            ON)
 option(WITH_STATIC          "Static build"                            OFF)
 option(WITH_UPNP            "Include support for UPnP client"         OFF)
-option(WITH_MESHNET         "Build for cjdns test network"            OFF)
+option(WITH_GIT_VERSION     "Use git commit info as version"          OFF)
 option(WITH_ADDRSANITIZER   "Build with address sanitizer unix only"  OFF)
 option(WITH_THREADSANITIZER "Build with thread sanitizer unix only"   OFF)
 
 # paths
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake_modules")
-set(CMAKE_SOURCE_DIR "..")
+set(CMAKE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 #Handle paths nicely
 include(GNUInstallDirs)
@@ -85,16 +85,19 @@ set(DAEMON_SRC
   "${DAEMON_SRC_DIR}/Daemon.cpp"
   "${DAEMON_SRC_DIR}/HTTPServer.cpp"
   "${DAEMON_SRC_DIR}/I2PControl.cpp"
+  "${DAEMON_SRC_DIR}/I2PControlHandlers.cpp"
   "${DAEMON_SRC_DIR}/i2pd.cpp"
   "${DAEMON_SRC_DIR}/UPnP.cpp"
 )
 
-if(WITH_MESHNET)
-  add_definitions(-DMESHNET)
-endif()
-
 if(WITH_UPNP)
   add_definitions(-DUSE_UPNP)
+endif()
+
+if(WITH_GIT_VERSION)
+  include(GetGitRevisionDescription)
+  git_describe(GIT_VERSION)
+  add_definitions(-DGITVER="${GIT_VERSION}")
 endif()
 
 if(APPLE)
@@ -170,24 +173,13 @@ endif()
 
 
 # libraries
-# TODO: once CMake 3.1+ becomes mainstream, see e.g. http://stackoverflow.com/a/29871891/673826
-# use imported Threads::Threads instead
 set(THREADS_PREFER_PTHREAD_FLAG ON)
-if(IOS)
-  set(CMAKE_THREAD_LIBS_INIT "-lpthread")
-  set(CMAKE_HAVE_THREADS_LIBRARY 1)
-  set(CMAKE_USE_WIN32_THREADS_INIT 0)
-  set(CMAKE_USE_PTHREADS_INIT 1)
-else()
-  find_package(Threads REQUIRED)
-endif()
-if(THREADS_HAVE_PTHREAD_ARG) # compile time flag
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
-endif()
+find_package(Threads REQUIRED)
 
 if(WITH_STATIC)
   set(Boost_USE_STATIC_LIBS ON)
   set(Boost_USE_STATIC_RUNTIME ON)
+  set(OPENSSL_USE_STATIC_LIBS ON)
   set(BUILD_SHARED_LIBS OFF)
   if(${CMAKE_CXX_COMPILER} MATCHES ".*-openwrt-.*")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
@@ -202,8 +194,6 @@ else()
   add_definitions(-DBOOST_SYSTEM_DYN_LINK -DBOOST_FILESYSTEM_DYN_LINK -DBOOST_PROGRAM_OPTIONS_DYN_LINK -DBOOST_DATE_TIME_DYN_LINK -DBOOST_REGEX_DYN_LINK)
 endif()
 
-target_link_libraries(libi2pdclient libi2pd libi2pdlang)
-
 find_package(Boost COMPONENTS system filesystem program_options date_time REQUIRED)
 if(NOT DEFINED Boost_INCLUDE_DIRS)
   message(SEND_ERROR "Boost is not found, or your boost version was below 1.46. Please download Boost!")
@@ -215,7 +205,7 @@ if(NOT DEFINED OPENSSL_INCLUDE_DIR)
 endif()
 
 if(OPENSSL_VERSION VERSION_GREATER_EQUAL "3.0.0")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-declarations")
+  add_definitions(-DOPENSSL_SUPPRESS_DEPRECATED)
 endif()
 
 if(WITH_UPNP)
@@ -235,12 +225,6 @@ endif()
 # load includes
 include_directories(SYSTEM ${Boost_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIR} ${ZLIB_INCLUDE_DIR})
 
-# warn if for meshnet
-if(WITH_MESHNET)
-  message(STATUS "Building for testnet")
-  message(WARNING "This build will NOT work on mainline i2p")
-endif()
-
 include(CheckAtomic)
 
 # show summary
@@ -258,14 +242,10 @@ message(STATUS "  LIBRARY          : ${WITH_LIBRARY}")
 message(STATUS "  BINARY           : ${WITH_BINARY}")
 message(STATUS "  STATIC BUILD     : ${WITH_STATIC}")
 message(STATUS "  UPnP             : ${WITH_UPNP}")
-message(STATUS "  MESHNET          : ${WITH_MESHNET}")
+message(STATUS "  GIT VERSION      : ${WITH_GIT_VERSION}")
 message(STATUS "  ADDRSANITIZER    : ${WITH_ADDRSANITIZER}")
 message(STATUS "  THREADSANITIZER  : ${WITH_THREADSANITIZER}")
 message(STATUS "---------------------------------------")
-
-if(WITH_MESHNET)
-  message(STATUS "WARNING: Using the MESHNET option will make it impossible to use the application with the main network!!!")
-endif()
 
 if(WITH_BINARY)
   add_executable("${PROJECT_NAME}" ${DAEMON_SRC})
@@ -278,23 +258,17 @@ if(WITH_BINARY)
     set_target_properties("${PROJECT_NAME}" PROPERTIES LINK_FLAGS "-z relro -z now")
   endif()
 
-  if(WITH_UPNP)
-    set(UPNP_LIB ${MINIUPNPC_LIBRARY})
-  endif()
-
   # FindBoost pulls pthread for thread which is broken for static linking at least on Ubuntu 15.04
   list(GET Boost_LIBRARIES -1 LAST_Boost_LIBRARIES)
   if(${LAST_Boost_LIBRARIES} MATCHES ".*pthread.*")
     list(REMOVE_AT Boost_LIBRARIES -1)
   endif()
 
-
   if(WITH_STATIC)
     set(DL_LIB ${CMAKE_DL_LIBS})
   endif()
 
-  target_link_libraries(libi2pd ${Boost_LIBRARIES} ${ZLIB_LIBRARY})
-  target_link_libraries("${PROJECT_NAME}" libi2pd libi2pdclient libi2pdlang ${DL_LIB} ${Boost_LIBRARIES} ${OPENSSL_LIBRARIES} ${UPNP_LIB} ${ZLIB_LIBRARY} ${CMAKE_THREAD_LIBS_INIT} ${DL_LIB} ${CMAKE_REQUIRED_LIBRARIES})
+  target_link_libraries("${PROJECT_NAME}" libi2pd libi2pdclient libi2pdlang ${DL_LIB} ${Boost_LIBRARIES} OpenSSL::SSL OpenSSL::Crypto ${MINIUPNPC_LIBRARY} ZLIB::ZLIB Threads::Threads ${DL_LIB} ${CMAKE_REQUIRED_LIBRARIES})
 
   install(TARGETS "${PROJECT_NAME}" RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)
   set(APPS "\${CMAKE_INSTALL_PREFIX}/bin/${PROJECT_NAME}${CMAKE_EXECUTABLE_SUFFIX}")

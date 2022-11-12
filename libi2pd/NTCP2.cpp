@@ -23,7 +23,7 @@
 #include "HTTP.h"
 #include "util.h"
 
-#ifdef __linux__
+#if defined(__linux__) && !defined(_NETINET_IN_H)
 	#include <linux/in6.h>
 #endif
 
@@ -66,7 +66,7 @@ namespace transport
 	{
 		MixHash (sessionRequest + 32, 32); // encrypted payload
 
-		int paddingLength =  sessionRequestLen - 64;
+		int paddingLength = sessionRequestLen - 64;
 		if (paddingLength > 0)
 			MixHash (sessionRequest + 64, paddingLength);
 		MixHash (epub, 32);
@@ -130,7 +130,7 @@ namespace transport
 		// m3p2Len
 		auto bufLen = i2p::context.GetRouterInfo ().GetBufferLen ();
 		m3p2Len = bufLen + 4 + 16; // (RI header + RI + MAC for now) TODO: implement options
-		htobe16buf (options + 4,  m3p2Len);
+		htobe16buf (options + 4, m3p2Len);
 		// fill m3p2 payload (RouterInfo block)
 		m_SessionConfirmedBuffer = new uint8_t[m3p2Len + 48]; // m3p1 is 48 bytes
 		uint8_t * m3p2 = m_SessionConfirmedBuffer + 48;
@@ -231,11 +231,11 @@ namespace transport
 				auto ts = i2p::util::GetSecondsSinceEpoch ();
 				uint32_t tsA = bufbe32toh (options + 8);
 				if (tsA < ts - NTCP2_CLOCK_SKEW || tsA > ts + NTCP2_CLOCK_SKEW)
-				{	
+				{
 					LogPrint (eLogWarning, "NTCP2: SessionRequest time difference ", (int)(ts - tsA), " exceeds clock skew");
 					clockSkew = true;
 					// we send SessionCreate to let Alice know our time and then close session
-				}	
+				}
 			}
 			else
 			{
@@ -320,7 +320,7 @@ namespace transport
 	}
 
 	NTCP2Session::NTCP2Session (NTCP2Server& server, std::shared_ptr<const i2p::data::RouterInfo> in_RemoteRouter,
-	    	std::shared_ptr<const i2p::data::RouterInfo::Address> addr):
+		std::shared_ptr<const i2p::data::RouterInfo::Address> addr):
 		TransportSession (in_RemoteRouter, NTCP2_ESTABLISH_TIMEOUT),
 		m_Server (server), m_Socket (m_Server.GetService ()),
 		m_IsEstablished (false), m_IsTerminated (false),
@@ -418,7 +418,7 @@ namespace transport
 	void NTCP2Session::DeleteNextReceiveBuffer (uint64_t ts)
 	{
 		if (m_NextReceivedBuffer && !m_IsReceiving &&
-		    ts > m_LastActivityTimestamp + NTCP2_RECEIVE_BUFFER_DELETION_TIMEOUT)
+			ts > m_LastActivityTimestamp + NTCP2_RECEIVE_BUFFER_DELETION_TIMEOUT)
 		{
 			delete[] m_NextReceivedBuffer;
 			m_NextReceivedBuffer = nullptr;
@@ -484,9 +484,9 @@ namespace transport
 				if (clockSkew)
 				{
 					// we don't care about padding, send SessionCreated and close session
-					SendSessionCreated (); 
+					SendSessionCreated ();
 					m_Server.GetService ().post (std::bind (&NTCP2Session::Terminate, shared_from_this ()));
-				}	
+				}
 				else if (paddingLen > 0)
 				{
 					if (paddingLen <= NTCP2_SESSION_REQUEST_MAX_SIZE - 64) // session request is 287 bytes max
@@ -496,7 +496,7 @@ namespace transport
 					}
 					else
 					{
-						LogPrint (eLogWarning, "NTCP2: SessionRequest padding length ", (int)paddingLen,  " is too long");
+						LogPrint (eLogWarning, "NTCP2: SessionRequest padding length ", (int)paddingLen, " is too long");
 						Terminate ();
 					}
 				}
@@ -549,7 +549,7 @@ namespace transport
 					}
 					else
 					{
-						LogPrint (eLogWarning, "NTCP2: SessionCreated padding length ", (int)paddingLen,  " is too long");
+						LogPrint (eLogWarning, "NTCP2: SessionCreated padding length ", (int)paddingLen, " is too long");
 						Terminate ();
 					}
 				}
@@ -757,7 +757,7 @@ namespace transport
 		if (IsTerminated ()) return;
 #ifdef __linux__
 		const int one = 1;
-    	setsockopt(m_Socket.native_handle(), IPPROTO_TCP, TCP_QUICKACK, &one, sizeof(one));
+		setsockopt(m_Socket.native_handle(), IPPROTO_TCP, TCP_QUICKACK, &one, sizeof(one));
 #endif
 		boost::asio::async_read (m_Socket, boost::asio::buffer(&m_NextReceivedLen, 2), boost::asio::transfer_all (),
 			std::bind(&NTCP2Session::HandleReceivedLength, shared_from_this (), std::placeholders::_1, std::placeholders::_2));
@@ -1126,11 +1126,11 @@ namespace transport
 	{
 		if (!m_SendKey ||
 #if OPENSSL_SIPHASH
-		    !m_SendMDCtx
+			!m_SendMDCtx
 #else
-		    !m_SendSipKey
+			!m_SendSipKey
 #endif
-		    ) return;
+		) return;
 		m_NextSendBuffer = new uint8_t[49]; // 49 = 12 bytes message + 16 bytes MAC + 2 bytes size + up to 19 padding block
 		// termination block
 		m_NextSendBuffer[2] = eNTCP2BlkTermination;
@@ -1164,20 +1164,20 @@ namespace transport
 		else if (m_SendQueue.size () > NTCP2_MAX_OUTGOING_QUEUE_SIZE)
 		{
 			LogPrint (eLogWarning, "NTCP2: Outgoing messages queue size to ",
-			   	GetIdentHashBase64(), " exceeds ",  NTCP2_MAX_OUTGOING_QUEUE_SIZE);
+				GetIdentHashBase64(), " exceeds ", NTCP2_MAX_OUTGOING_QUEUE_SIZE);
 			Terminate ();
 		}
 	}
 
-	void NTCP2Session::SendLocalRouterInfo ()
+	void NTCP2Session::SendLocalRouterInfo (bool update)
 	{
-		if (!IsOutgoing ()) // we send it in SessionConfirmed
+		if (update || !IsOutgoing ()) // we send it in SessionConfirmed for ougoing session
 			m_Server.GetService ().post (std::bind (&NTCP2Session::SendRouterInfo, shared_from_this ()));
 	}
 
 	NTCP2Server::NTCP2Server ():
 		RunnableServiceWithWork ("NTCP2"), m_TerminationTimer (GetService ()),
-		 m_ProxyType(eNoProxy), m_Resolver(GetService ())
+			m_ProxyType(eNoProxy), m_Resolver(GetService ())
 	{
 	}
 
@@ -1243,7 +1243,7 @@ namespace transport
 							m_NTCP2V6Acceptor->open (boost::asio::ip::tcp::v6());
 							m_NTCP2V6Acceptor->set_option (boost::asio::ip::v6_only (true));
 							m_NTCP2V6Acceptor->set_option (boost::asio::socket_base::reuse_address (true));
-#ifdef __linux__
+#if defined(__linux__) && !defined(_NETINET_IN_H)
 							if (!m_Address6 && !m_YggdrasilAddress) // only if not binded to address
 							{
 								// Set preference to use public IPv6 address -- tested on linux, not works on windows, and not tested on others
@@ -1558,7 +1558,7 @@ namespace transport
 			case eSocksProxy:
 			{
 				// TODO: support username/password auth etc
-				static const uint8_t buff[3] = {0x05, 0x01, 0x00};
+				static const uint8_t buff[3] = {SOCKS5_VER, 0x01, 0x00};
 				boost::asio::async_write(conn->GetSocket(), boost::asio::buffer(buff, 3), boost::asio::transfer_all(),
 					[] (const boost::system::error_code & ec, std::size_t transferred)
 					{
@@ -1672,21 +1672,21 @@ namespace transport
 		size_t sz = 6; // header + port
 		auto buff = std::make_shared<std::vector<int8_t> >(256);
 		auto readbuff = std::make_shared<std::vector<int8_t> >(256);
-		(*buff)[0] = 0x05;
-		(*buff)[1] = 0x01;
+		(*buff)[0] = SOCKS5_VER;
+		(*buff)[1] = SOCKS5_CMD_CONNECT;
 		(*buff)[2] = 0x00;
 
 		auto& ep = conn->GetRemoteEndpoint ();
 		if(ep.address ().is_v4 ())
 		{
-			(*buff)[3] = 0x01;
+			(*buff)[3] = SOCKS5_ATYP_IPV4;
 			auto addrbytes = ep.address ().to_v4().to_bytes();
 			sz += 4;
 			memcpy(buff->data () + 4, addrbytes.data(), 4);
 		}
 		else if (ep.address ().is_v6 ())
 		{
-			(*buff)[3] = 0x04;
+			(*buff)[3] = SOCKS5_ATYP_IPV6;
 			auto addrbytes = ep.address ().to_v6().to_bytes();
 			sz += 16;
 			memcpy(buff->data () + 4, addrbytes.data(), 16);
@@ -1708,22 +1708,24 @@ namespace transport
 				}
 			});
 
-		boost::asio::async_read(conn->GetSocket(), boost::asio::buffer(readbuff->data (), 10),
+		boost::asio::async_read(conn->GetSocket(), boost::asio::buffer(readbuff->data (), SOCKS5_UDP_IPV4_REQUEST_HEADER_SIZE), // read min reply size
+		    boost::asio::transfer_all(),                    
 			[timer, conn, sz, readbuff](const boost::system::error_code & e, std::size_t transferred)
 			{
-				if(e)
-				{
+				if (e)
 					LogPrint(eLogError, "NTCP2: SOCKS proxy read error ", e.message());
-				}
-				else if(transferred == sz)
+				else if (!(*readbuff)[1]) // succeeded
 				{
-					if((*readbuff)[1] == 0x00)
-					{
-						timer->cancel();
-						conn->ClientLogin();
-						return;
-					}
+					boost::system::error_code ec;
+					size_t moreBytes = conn->GetSocket ().available(ec);	
+					if (moreBytes) // read remaining portion of reply if ipv6 received
+						boost::asio::read (conn->GetSocket (), boost::asio::buffer(readbuff->data (), moreBytes), boost::asio::transfer_all (), ec);
+					timer->cancel();
+					conn->ClientLogin();
+					return;
 				}
+				else
+					LogPrint(eLogError, "NTCP2: Proxy reply error ", (int)(*readbuff)[1]);
 				timer->cancel();
 				conn->Terminate();
 			});

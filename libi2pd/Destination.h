@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2021, The PurpleI2P Project
+* Copyright (c) 2013-2022, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -53,6 +53,10 @@ namespace client
 	const int DEFAULT_INBOUND_TUNNELS_QUANTITY = 5;
 	const char I2CP_PARAM_OUTBOUND_TUNNELS_QUANTITY[] = "outbound.quantity";
 	const int DEFAULT_OUTBOUND_TUNNELS_QUANTITY = 5;
+	const char I2CP_PARAM_INBOUND_TUNNELS_LENGTH_VARIANCE[] = "inbound.lengthVariance";
+	const int DEFAULT_INBOUND_TUNNELS_LENGTH_VARIANCE = 0;
+	const char I2CP_PARAM_OUTBOUND_TUNNELS_LENGTH_VARIANCE[] = "outbound.lengthVariance";
+	const int DEFAULT_OUTBOUND_TUNNELS_LENGTH_VARIANCE = 0;
 	const char I2CP_PARAM_EXPLICIT_PEERS[] = "explicitPeers";
 	const int STREAM_REQUEST_TIMEOUT = 60; //in seconds
 	const char I2CP_PARAM_TAGS_TO_SEND[] = "crypto.tagsToSend";
@@ -134,6 +138,7 @@ namespace client
 
 			// override GarlicDestination
 			bool SubmitSessionKey (const uint8_t * key, const uint8_t * tag);
+			void SubmitECIESx25519Key (const uint8_t * key, uint64_t tag);
 			void ProcessGarlicMessage (std::shared_ptr<I2NPMessage> msg);
 			void ProcessDeliveryStatusMessage (std::shared_ptr<I2NPMessage> msg);
 			void SetLeaseSetUpdated ();
@@ -242,6 +247,8 @@ namespace client
 			// following methods operate with default streaming destination
 			void CreateStream (StreamRequestComplete streamRequestComplete, const i2p::data::IdentHash& dest, int port = 0);
 			void CreateStream (StreamRequestComplete streamRequestComplete, std::shared_ptr<const i2p::data::BlindedPublicKey> dest, int port = 0);
+			std::shared_ptr<i2p::stream::Stream> CreateStream (const i2p::data::IdentHash& dest, int port = 0); // sync
+			std::shared_ptr<i2p::stream::Stream> CreateStream (std::shared_ptr<const i2p::data::BlindedPublicKey> dest, int port = 0); // sync
 			std::shared_ptr<i2p::stream::Stream> CreateStream (std::shared_ptr<const i2p::data::LeaseSet> remote, int port = 0);
 			void SendPing (const i2p::data::IdentHash& to);
 			void SendPing (std::shared_ptr<const i2p::data::BlindedPublicKey> to);
@@ -277,6 +284,9 @@ namespace client
 			void PersistTemporaryKeys (EncryptionKey * keys, bool isSingleKey);
 			void ReadAuthKey (const std::string& group, const std::map<std::string, std::string> * params);
 
+			template<typename Dest>	
+			std::shared_ptr<i2p::stream::Stream> CreateStreamSync (const Dest& dest, int port);
+			
 		private:
 
 			i2p::data::PrivateKeys m_Keys;

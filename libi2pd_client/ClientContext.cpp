@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2021, The PurpleI2P Project
+* Copyright (c) 2013-2022, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -261,7 +261,7 @@ namespace client
 		static const std::string transient("transient");
 		if (!filename.compare (0, transient.length (), transient)) // starts with transient
 		{
-			keys = i2p::data::PrivateKeys::CreateRandomKeys (sigType, cryptoType);
+			keys = i2p::data::PrivateKeys::CreateRandomKeys (sigType, cryptoType, true);
 			LogPrint (eLogInfo, "Clients: New transient keys address ", m_AddressBook.ToAddress(keys.GetPublic ()->GetIdentHash ()), " created");
 			return true;
 		}
@@ -288,7 +288,7 @@ namespace client
 		else
 		{
 			LogPrint (eLogError, "Clients: Can't open file ", fullPath, " Creating new one with signature type ", sigType, " crypto type ", cryptoType);
-			keys = i2p::data::PrivateKeys::CreateRandomKeys (sigType, cryptoType);
+			keys = i2p::data::PrivateKeys::CreateRandomKeys (sigType, cryptoType, true);
 			std::ofstream f (fullPath, std::ofstream::binary | std::ofstream::out);
 			size_t len = keys.GetFullLen ();
 			uint8_t * buf = new uint8_t[len];
@@ -328,7 +328,7 @@ namespace client
 		i2p::data::SigningKeyType sigType, i2p::data::CryptoKeyType cryptoType,
 		const std::map<std::string, std::string> * params)
 	{
-		i2p::data::PrivateKeys keys = i2p::data::PrivateKeys::CreateRandomKeys (sigType, cryptoType);
+		i2p::data::PrivateKeys keys = i2p::data::PrivateKeys::CreateRandomKeys (sigType, cryptoType, true);
 		auto localDestination = std::make_shared<RunnableClientDestination> (keys, isPublic, params);
 		AddLocalDestination (localDestination);
 		return localDestination;
@@ -339,7 +339,7 @@ namespace client
 		i2p::data::SigningKeyType sigType, i2p::data::CryptoKeyType cryptoType,
 		const std::map<std::string, std::string> * params)
 	{
-		i2p::data::PrivateKeys keys = i2p::data::PrivateKeys::CreateRandomKeys (sigType, cryptoType);
+		i2p::data::PrivateKeys keys = i2p::data::PrivateKeys::CreateRandomKeys (sigType, cryptoType, true);
 		auto localDestination = std::make_shared<ClientDestination> (service, keys, isPublic, params);
 		AddLocalDestination (localDestination);
 		return localDestination;
@@ -455,6 +455,8 @@ namespace client
 		options[I2CP_PARAM_OUTBOUND_TUNNEL_LENGTH] = GetI2CPOption (section, I2CP_PARAM_OUTBOUND_TUNNEL_LENGTH, DEFAULT_OUTBOUND_TUNNEL_LENGTH);
 		options[I2CP_PARAM_INBOUND_TUNNELS_QUANTITY] = GetI2CPOption (section, I2CP_PARAM_INBOUND_TUNNELS_QUANTITY, DEFAULT_INBOUND_TUNNELS_QUANTITY);
 		options[I2CP_PARAM_OUTBOUND_TUNNELS_QUANTITY] = GetI2CPOption (section, I2CP_PARAM_OUTBOUND_TUNNELS_QUANTITY, DEFAULT_OUTBOUND_TUNNELS_QUANTITY);
+		options[I2CP_PARAM_INBOUND_TUNNELS_LENGTH_VARIANCE] = GetI2CPOption (section, I2CP_PARAM_INBOUND_TUNNELS_LENGTH_VARIANCE, DEFAULT_INBOUND_TUNNELS_LENGTH_VARIANCE);
+		options[I2CP_PARAM_OUTBOUND_TUNNELS_LENGTH_VARIANCE] = GetI2CPOption (section, I2CP_PARAM_OUTBOUND_TUNNELS_LENGTH_VARIANCE, DEFAULT_OUTBOUND_TUNNELS_LENGTH_VARIANCE);
 		options[I2CP_PARAM_TAGS_TO_SEND] = GetI2CPOption (section, I2CP_PARAM_TAGS_TO_SEND, DEFAULT_TAGS_TO_SEND);
 		options[I2CP_PARAM_MIN_TUNNEL_LATENCY] = GetI2CPOption(section, I2CP_PARAM_MIN_TUNNEL_LATENCY, DEFAULT_MIN_TUNNEL_LATENCY);
 		options[I2CP_PARAM_MAX_TUNNEL_LATENCY] = GetI2CPOption(section, I2CP_PARAM_MAX_TUNNEL_LATENCY, DEFAULT_MAX_TUNNEL_LATENCY);
@@ -487,10 +489,14 @@ namespace client
 			options[I2CP_PARAM_INBOUND_TUNNEL_LENGTH] = value;
 		if (i2p::config::GetOption(prefix + I2CP_PARAM_INBOUND_TUNNELS_QUANTITY, value))
 			options[I2CP_PARAM_INBOUND_TUNNELS_QUANTITY] = value;
+		if (i2p::config::GetOption(prefix + I2CP_PARAM_INBOUND_TUNNELS_LENGTH_VARIANCE, value))
+			options[I2CP_PARAM_INBOUND_TUNNELS_LENGTH_VARIANCE] = value;
 		if (i2p::config::GetOption(prefix + I2CP_PARAM_OUTBOUND_TUNNEL_LENGTH, value))
 			options[I2CP_PARAM_OUTBOUND_TUNNEL_LENGTH] = value;
 		if (i2p::config::GetOption(prefix + I2CP_PARAM_OUTBOUND_TUNNELS_QUANTITY, value))
 			options[I2CP_PARAM_OUTBOUND_TUNNELS_QUANTITY] = value;
+		if (i2p::config::GetOption(prefix + I2CP_PARAM_OUTBOUND_TUNNELS_LENGTH_VARIANCE, value))
+			options[I2CP_PARAM_OUTBOUND_TUNNELS_LENGTH_VARIANCE] = value;
 		if (i2p::config::GetOption(prefix + I2CP_PARAM_MIN_TUNNEL_LATENCY, value))
 			options[I2CP_PARAM_MIN_TUNNEL_LATENCY] = value;
 		if (i2p::config::GetOption(prefix + I2CP_PARAM_MAX_TUNNEL_LATENCY, value))
@@ -602,21 +608,29 @@ namespace client
 					if (type == I2P_TUNNELS_SECTION_TYPE_UDPCLIENT) {
 						// udp client
 						// TODO: hostnames
-						boost::asio::ip::udp::endpoint end(boost::asio::ip::address::from_string(address), port);
+						boost::asio::ip::udp::endpoint end (boost::asio::ip::address::from_string(address), port);
 						if (!localDestination)
 							localDestination = m_SharedLocalDestination;
 
 						bool gzip = section.second.get (I2P_CLIENT_TUNNEL_GZIP, true);
-						auto clientTunnel = std::make_shared<I2PUDPClientTunnel>(name, dest, end, localDestination, destinationPort, gzip);
+						auto clientTunnel = std::make_shared<I2PUDPClientTunnel> (name, dest, end, localDestination, destinationPort, gzip);
 
-						auto ins = m_ClientForwards.insert(std::make_pair(end, clientTunnel));
+						auto ins = m_ClientForwards.insert (std::make_pair (end, clientTunnel));
 						if (ins.second)
 						{
-							clientTunnel->Start();
+							clientTunnel->Start ();
 							numClientTunnels++;
 						}
 						else
 						{
+							// TODO: update
+							if (ins.first->second->GetLocalDestination () != clientTunnel->GetLocalDestination ())
+							{
+								LogPrint (eLogInfo, "Clients: I2P UDP client tunnel destination updated");
+								ins.first->second->Stop ();
+								ins.first->second->SetLocalDestination (clientTunnel->GetLocalDestination ());
+								ins.first->second->Start ();
+							}
 							ins.first->second->isUpdated = true;
 							LogPrint(eLogError, "Clients: I2P Client forward for endpoint ", end, " already exists");
 						}
@@ -712,6 +726,7 @@ namespace client
 
 					std::string address = section.second.get<std::string> (I2P_SERVER_TUNNEL_ADDRESS, "");
 					bool isUniqueLocal = section.second.get(I2P_SERVER_TUNNEL_ENABLE_UNIQUE_LOCAL, true);
+					bool ssl = section.second.get(I2P_SERVER_TUNNEL_SSL, false);
 
 					// I2CP
 					std::map<std::string, std::string> options;
@@ -785,11 +800,13 @@ namespace client
 
 					if (!address.empty ())
 						serverTunnel->SetLocalAddress (address);
-					if(!isUniqueLocal)
+					if (!isUniqueLocal)
 					{
 						LogPrint(eLogInfo, "Clients: Disabling loopback address mapping");
 						serverTunnel->SetUniqueLocal(isUniqueLocal);
 					}
+					if (ssl)
+						serverTunnel->SetSSL (true);
 					if (accessList.length () > 0)
 					{
 						std::set<i2p::data::IdentHash> idents;
@@ -850,6 +867,8 @@ namespace client
 			uint16_t    httpProxyPort;         i2p::config::GetOption("httpproxy.port",          httpProxyPort);
 			std::string httpOutProxyURL;       i2p::config::GetOption("httpproxy.outproxy",      httpOutProxyURL);
 			bool        httpAddresshelper;     i2p::config::GetOption("httpproxy.addresshelper", httpAddresshelper);
+			if (httpAddresshelper)
+				i2p::config::GetOption("addressbook.enabled", httpAddresshelper); // addresshelper is not supported without address book
 			i2p::data::SigningKeyType sigType; i2p::config::GetOption("httpproxy.signaturetype", sigType);
 			LogPrint(eLogInfo, "Clients: Starting HTTP Proxy at ", httpProxyAddr, ":", httpProxyPort);
 			if (httpProxyKeys.length () > 0)
@@ -884,7 +903,7 @@ namespace client
 		bool socksproxy; i2p::config::GetOption("socksproxy.enabled", socksproxy);
 		if (socksproxy)
 		{
-			std::string httpProxyKeys;         i2p::config::GetOption("httpproxy.keys",          httpProxyKeys);
+			std::string httpProxyKeys;         i2p::config::GetOption("httpproxy.keys",              httpProxyKeys);
 			// we still need httpProxyKeys to compare with sockProxyKeys
 			std::string socksProxyKeys;        i2p::config::GetOption("socksproxy.keys",             socksProxyKeys);
 			std::string socksProxyAddr;        i2p::config::GetOption("socksproxy.address",          socksProxyAddr);
@@ -970,11 +989,11 @@ namespace client
 			}
 		}
 
-		/* // TODO: Write correct UDP tunnels stop
+		// TODO: Write correct UDP tunnels stop
 		for (auto it = m_ClientForwards.begin (); it != m_ClientForwards.end ();)
 		{
 			if(clean && !it->second->isUpdated) {
-				it->second = nullptr;
+				it->second->Stop ();
 				it = m_ClientForwards.erase(it);
 			} else {
 				it->second->isUpdated = false;
@@ -985,13 +1004,13 @@ namespace client
 		for (auto it = m_ServerForwards.begin (); it != m_ServerForwards.end ();)
 		{
 			if(clean && !it->second->isUpdated) {
-				it->second = nullptr;
+				it->second->Stop ();
 				it = m_ServerForwards.erase(it);
 			} else {
 				it->second->isUpdated = false;
 				it++;
 			}
-		} */
+		}
 	}
 }
 }
