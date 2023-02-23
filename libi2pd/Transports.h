@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2022, The PurpleI2P Project
+* Copyright (c) 2013-2023, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -21,7 +21,6 @@
 #include <atomic>
 #include <boost/asio.hpp>
 #include "TransportSession.h"
-#include "SSU.h"
 #include "SSU2.h"
 #include "NTCP2.h"
 #include "RouterInfo.h"
@@ -64,6 +63,7 @@ namespace transport
 
 	const int PEER_ROUTER_INFO_UPDATE_INTERVAL = 31*60; // in seconds
 	const int PEER_ROUTER_INFO_UPDATE_INTERVAL_VARIANCE = 7*60; // in seconds
+	const size_t PEER_ROUTER_INFO_OVERLOAD_QUEUE_SIZE = 25;
 	struct Peer
 	{
 		int numAttempts;
@@ -72,17 +72,28 @@ namespace transport
 		uint64_t creationTime, nextRouterInfoUpdateTime;
 		std::vector<std::shared_ptr<i2p::I2NPMessage> > delayedMessages;
 		std::vector<i2p::data::RouterInfo::SupportedTransports> priority;
+		bool isHighBandwidth;
 
 		Peer (std::shared_ptr<const i2p::data::RouterInfo> r, uint64_t ts):
 			numAttempts (0), router (r), creationTime (ts),
-			nextRouterInfoUpdateTime (ts + PEER_ROUTER_INFO_UPDATE_INTERVAL)
+			nextRouterInfoUpdateTime (ts + PEER_ROUTER_INFO_UPDATE_INTERVAL),
+			isHighBandwidth (false)
 		{
+			if (router)
+				isHighBandwidth = router->IsHighBandwidth ();
 		}
 
 		void Done ()
 		{
 			for (auto& it: sessions)
 				it->Done ();
+		}
+
+		void SetRouter (std::shared_ptr<const i2p::data::RouterInfo> r)
+		{
+			router = r;
+			if (router)
+				isHighBandwidth = router->IsHighBandwidth ();
 		}
 	};
 
@@ -96,10 +107,9 @@ namespace transport
 			Transports ();
 			~Transports ();
 
-			void Start (bool enableNTCP2=true, bool enableSSU=true, bool enableSSU2=false);
+			void Start (bool enableNTCP2=true, bool enableSSU2=true);
 			void Stop ();
 
-			bool IsBoundSSU() const { return m_SSUServer != nullptr; }
 			bool IsBoundSSU2() const { return m_SSU2Server != nullptr; }
 			bool IsBoundNTCP2() const { return m_NTCP2Server != nullptr; }
 
@@ -126,10 +136,13 @@ namespace transport
 			uint32_t GetInBandwidth () const { return m_InBandwidth; };
 			uint32_t GetOutBandwidth () const { return m_OutBandwidth; };
 			uint32_t GetTransitBandwidth () const { return m_TransitBandwidth; };
+			uint32_t GetInBandwidth15s () const { return m_InBandwidth15s; };
+			uint32_t GetOutBandwidth15s () const { return m_OutBandwidth15s; };
+			uint32_t GetTransitBandwidth15s () const { return m_TransitBandwidth15s; };
 			bool IsBandwidthExceeded () const;
 			bool IsTransitBandwidthExceeded () const;
 			size_t GetNumPeers () const { return m_Peers.size (); };
-			std::shared_ptr<const i2p::data::RouterInfo> GetRandomPeer () const;
+			std::shared_ptr<const i2p::data::RouterInfo> GetRandomPeer (bool isHighBandwidth) const;
 
 			/** get a trusted first hop for restricted routes */
 			std::shared_ptr<const i2p::data::RouterInfo> GetRestrictedPeer() const;
@@ -157,9 +170,12 @@ namespace transport
 			void SetPriority (Peer& peer) const;
 			void HandlePeerCleanupTimer (const boost::system::error_code& ecode);
 			void HandlePeerTestTimer (const boost::system::error_code& ecode);
+			void HandleUpdateBandwidthTimer (const boost::system::error_code& ecode);
 
-			void UpdateBandwidth ();
 			void DetectExternalIP ();
+
+			template<typename Filter>
+				std::shared_ptr<const i2p::data::RouterInfo> GetRandomPeer (Filter filter) const;
 
 		private:
 
@@ -168,9 +184,8 @@ namespace transport
 			std::thread * m_Thread;
 			boost::asio::io_service * m_Service;
 			boost::asio::io_service::work * m_Work;
-			boost::asio::deadline_timer * m_PeerCleanupTimer, * m_PeerTestTimer;
+			boost::asio::deadline_timer * m_PeerCleanupTimer, * m_PeerTestTimer, * m_UpdateBandwidthTimer;
 
-			SSUServer * m_SSUServer;
 			SSU2Server * m_SSU2Server;
 			NTCP2Server * m_NTCP2Server;
 			mutable std::mutex m_PeersMutex;
@@ -179,9 +194,15 @@ namespace transport
 			X25519KeysPairSupplier m_X25519KeysPairSupplier;
 
 			std::atomic<uint64_t> m_TotalSentBytes, m_TotalReceivedBytes, m_TotalTransitTransmittedBytes;
-			uint32_t m_InBandwidth, m_OutBandwidth, m_TransitBandwidth; // bytes per second
+
+			// Bandwidth per second
+			uint32_t m_InBandwidth, m_OutBandwidth, m_TransitBandwidth;
 			uint64_t m_LastInBandwidthUpdateBytes, m_LastOutBandwidthUpdateBytes, m_LastTransitBandwidthUpdateBytes;
-			uint64_t m_LastBandwidthUpdateTime;
+
+			// Bandwidth every 15 seconds
+			uint32_t m_InBandwidth15s, m_OutBandwidth15s, m_TransitBandwidth15s;
+			uint64_t m_LastInBandwidth15sUpdateBytes, m_LastOutBandwidth15sUpdateBytes, m_LastTransitBandwidth15sUpdateBytes;
+			uint64_t m_LastBandwidth15sUpdateTime;
 
 			/** which router families to trust for first hops */
 			std::vector<i2p::data::FamilyID> m_TrustedFamilies;
@@ -196,7 +217,6 @@ namespace transport
 		public:
 
 			// for HTTP only
-			const SSUServer * GetSSUServer () const { return m_SSUServer; };
 			const NTCP2Server * GetNTCP2Server () const { return m_NTCP2Server; };
 			const SSU2Server * GetSSU2Server () const { return m_SSU2Server; };
 			const decltype(m_Peers)& GetPeers () const { return m_Peers; };

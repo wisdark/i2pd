@@ -259,7 +259,7 @@ namespace client
 	void I2PUDPClientTunnel::HandleRecvFromLocal (const boost::system::error_code & ec, std::size_t transferred)
 	{
 		if (m_cancel_resolve) {
-			LogPrint (eLogDebug, "UDP Client: Ignoring incomming data: stopping");
+			LogPrint (eLogDebug, "UDP Client: Ignoring incoming data: stopping");
 			return;
 		}
 		if (ec) {
@@ -372,6 +372,6 @@ namespace client
 		else
 			LogPrint (eLogWarning, "UDP Client: Not tracking udp session using port ", (int) toPort);
 	}
-	
+
 }
 }

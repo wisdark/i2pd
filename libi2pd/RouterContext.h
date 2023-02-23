@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2022, The PurpleI2P Project
+* Copyright (c) 2013-2023, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -47,7 +47,9 @@ namespace garlic
 		eRouterErrorNone = 0,
 		eRouterErrorClockSkew = 1,
 		eRouterErrorOffline = 2,
-		eRouterErrorSymmetricNAT = 3
+		eRouterErrorSymmetricNAT = 3,
+		eRouterErrorFullConeNAT = 4,
+		eRouterErrorNoDescriptors = 5
 	};
 
 	class RouterContext: public i2p::garlic::GarlicDestination
@@ -102,12 +104,10 @@ namespace garlic
 			uint64_t GetTransitBandwidthLimit () const { return (m_BandwidthLimit*m_ShareRatio)/100LL; };
 			RouterStatus GetStatus () const { return m_Status; };
 			void SetStatus (RouterStatus status);
-			void SetStatusSSU2 (RouterStatus status);
 			RouterError GetError () const { return m_Error; };
 			void SetError (RouterError error) { m_Error = error; };
 			RouterStatus GetStatusV6 () const { return m_StatusV6; };
 			void SetStatusV6 (RouterStatus status);
-			void SetStatusV6SSU2 (RouterStatus status);
 			RouterError GetErrorV6 () const { return m_ErrorV6; };
 			void SetErrorV6 (RouterError error) { m_ErrorV6 = error; };
 			int GetNetID () const { return m_NetID; };
@@ -116,21 +116,14 @@ namespace garlic
 			bool DecryptTunnelShortRequestRecord (const uint8_t * encrypted, uint8_t * data);
 
 			void UpdatePort (int port); // called from Daemon
-			void UpdateAddress (const boost::asio::ip::address& host); // called from SSU or Daemon
+			void UpdateAddress (const boost::asio::ip::address& host); // called from SSU2 or Daemon
 			void PublishNTCP2Address (int port, bool publish, bool v4, bool v6, bool ygg);
-			void UpdateNTCP2Address (bool enable);
 			void PublishSSU2Address (int port, bool publish, bool v4, bool v6);
-			void UpdateSSU2Address (bool enable);
-			void RemoveNTCPAddress (bool v4only = true); // delete NTCP address for older routers. TODO: remove later
-			void RemoveSSUAddress (); // delete SSU address for older routers
-			bool AddIntroducer (const i2p::data::RouterInfo::Introducer& introducer);
-			void RemoveIntroducer (const boost::asio::ip::udp::endpoint& e);
 			bool AddSSU2Introducer (const i2p::data::RouterInfo::Introducer& introducer, bool v4);
 			void RemoveSSU2Introducer (const i2p::data::IdentHash& h, bool v4);
 			void ClearSSU2Introducers (bool v4);
 			bool IsUnreachable () const;
 			void SetUnreachable (bool v4, bool v6);
-			void SetUnreachableSSU2 (bool v4, bool v6);
 			void SetReachable (bool v4, bool v6);
 			bool IsFloodfill () const { return m_IsFloodfill; };
 			void SetFloodfill (bool floodfill);
@@ -182,10 +175,12 @@ namespace garlic
 			void UpdateRouterInfo ();
 			void NewNTCP2Keys ();
 			void NewSSU2Keys ();
-			bool IsSSU2Only () const; // SSU2 and no SSU
+			void UpdateNTCP2Keys ();
+			void UpdateSSU2Keys ();
 			bool Load ();
 			void SaveKeys ();
 			uint16_t SelectRandomPort () const;
+			void PublishNTCP2Address (std::shared_ptr<i2p::data::RouterInfo::Address> address, int port, bool publish) const;
 
 			bool DecryptECIESTunnelBuildRecord (const uint8_t * encrypted, uint8_t * data, size_t clearTextSize);
 

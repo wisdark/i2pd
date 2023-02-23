@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2022, The PurpleI2P Project
+* Copyright (c) 2013-2023, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -165,20 +165,21 @@ namespace util
 
 		i2p::transport::InitTransports ();
 
-		bool transit; i2p::config::GetOption("notransit", transit);
-		i2p::context.SetAcceptsTunnels (!transit);
-		uint16_t transitTunnels; i2p::config::GetOption("limits.transittunnels", transitTunnels);
-		SetMaxNumTransitTunnels (transitTunnels);
-
 		bool isFloodfill; i2p::config::GetOption("floodfill", isFloodfill);
-		if (isFloodfill) {
+		if (isFloodfill)
+		{
 			LogPrint(eLogInfo, "Daemon: Router configured as floodfill");
 			i2p::context.SetFloodfill (true);
 		}
 		else
-		{
 			i2p::context.SetFloodfill (false);
-		}
+
+		bool transit; i2p::config::GetOption("notransit", transit);
+		i2p::context.SetAcceptsTunnels (!transit);
+		uint16_t transitTunnels; i2p::config::GetOption("limits.transittunnels", transitTunnels);
+		if (isFloodfill && i2p::config::IsDefault ("limits.transittunnels"))
+			transitTunnels *= 2; // double default number of transit tunnels for floodfill
+		SetMaxNumTransitTunnels (transitTunnels);
 
 		/* this section also honors 'floodfill' flag, if set above */
 		std::string bandwidth; i2p::config::GetOption("bandwidth", bandwidth);
@@ -298,15 +299,14 @@ namespace util
 
 		bool ntcp2; i2p::config::GetOption("ntcp2.enabled", ntcp2);
 		bool ssu2; i2p::config::GetOption("ssu2.enabled", ssu2);
-		bool ssu; i2p::config::GetOption("ssu", ssu);
 		bool checkInReserved; i2p::config::GetOption("reservedrange", checkInReserved);
 		LogPrint(eLogInfo, "Daemon: Starting Transports");
-		if(!ssu) LogPrint(eLogInfo, "Daemon: SSU disabled");
+		if(!ssu2) LogPrint(eLogInfo, "Daemon: SSU2 disabled");
 		if(!ntcp2) LogPrint(eLogInfo, "Daemon: NTCP2 disabled");
 
 		i2p::transport::transports.SetCheckReserved(checkInReserved);
-		i2p::transport::transports.Start(ntcp2, ssu, ssu2);
-		if (i2p::transport::transports.IsBoundSSU() || i2p::transport::transports.IsBoundSSU2() || i2p::transport::transports.IsBoundNTCP2())
+		i2p::transport::transports.Start(ntcp2, ssu2);
+		if (i2p::transport::transports.IsBoundSSU2() || i2p::transport::transports.IsBoundNTCP2())
 			LogPrint(eLogInfo, "Daemon: Transports started");
 		else
 		{

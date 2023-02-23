@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2022, The PurpleI2P Project
+* Copyright (c) 2013-2023, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -37,14 +37,7 @@ namespace data
 
 	void LeaseSet::Update (const uint8_t * buf, size_t len, bool verifySignature)
 	{
-		if (len > m_BufferLen)
-		{
-			auto oldBuffer = m_Buffer;
-			m_Buffer = new uint8_t[len];
-			delete[] oldBuffer;
-		}
-		memcpy (m_Buffer, buf, len);
-		m_BufferLen = len;
+		SetBuffer (buf, len);
 		ReadFromBuffer (false, verifySignature);
 	}
 
@@ -264,8 +257,18 @@ namespace data
 
 	void LeaseSet::SetBuffer (const uint8_t * buf, size_t len)
 	{
-		if (m_Buffer) delete[] m_Buffer;
-		m_Buffer = new uint8_t[len];
+		if (len > MAX_LS_BUFFER_SIZE)
+		{
+			LogPrint (eLogError, "LeaseSet: Buffer is too long ", len);
+			len = MAX_LS_BUFFER_SIZE;
+		}
+		if (m_Buffer && len > m_BufferLen)
+		{
+			delete[] m_Buffer;
+			m_Buffer = nullptr;
+		}
+		if (!m_Buffer)
+			m_Buffer = new uint8_t[len];
 		m_BufferLen = len;
 		memcpy (m_Buffer, buf, len);
 	}
@@ -312,7 +315,7 @@ namespace data
 	{
 		// standard LS2 header
 		std::shared_ptr<const IdentityEx> identity;
-		if (readIdentity)
+		if (readIdentity || !GetIdentity ())
 		{
 			identity = std::make_shared<IdentityEx>(buf, len);
 			SetIdentity (identity);
@@ -363,6 +366,8 @@ namespace data
 				VerifySignature (identity, buf, len, offset);
 			SetIsValid (verified);
 		}
+		else
+			SetIsValid (true);
 		offset += m_TransientVerifier ? m_TransientVerifier->GetSignatureLen () : identity->GetSignatureLen ();
 		if (offset > len) {
 			LogPrint (eLogWarning, "LeaseSet2: short buffer: wanted ", int(offset), "bytes, have ", int(len));

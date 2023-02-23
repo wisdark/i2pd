@@ -159,10 +159,11 @@ namespace transport
 
 	void UPnP::PortMapping ()
 	{
-		const auto& a = context.GetRouterInfo().GetAddresses();
-		for (const auto& address : a)
+		auto a = context.GetRouterInfo().GetAddresses();
+		if (!a) return;
+		for (const auto& address : *a)
 		{
-			if (!address->host.is_v6 () && address->port)
+			if (address && !address->host.is_v6 () && address->port)
 				TryPortMapping (address);
 		}
 		m_Timer.expires_from_now (boost::posix_time::minutes(20)); // every 20 minutes
@@ -210,10 +211,11 @@ namespace transport
 
 	void UPnP::CloseMapping ()
 	{
-		const auto& a = context.GetRouterInfo().GetAddresses();
-		for (const auto& address : a)
+		auto a = context.GetRouterInfo().GetAddresses();
+		if (!a) return;
+		for (const auto& address : *a)
 		{
-			if (!address->host.is_v6 () && address->port)
+			if (address && !address->host.is_v6 () && address->port)
 			CloseMapping (address);
 		}
 	}
@@ -248,10 +250,10 @@ namespace transport
 	{
 		switch (address->transportStyle)
 		{
-			case i2p::data::RouterInfo::eTransportNTCP:
+			case i2p::data::RouterInfo::eTransportNTCP2:
 				return "TCP";
 				break;
-			case i2p::data::RouterInfo::eTransportSSU:
+			case i2p::data::RouterInfo::eTransportSSU2:
 			default:
 				return "UDP";
 		}
