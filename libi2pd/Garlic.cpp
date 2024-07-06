@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2022, The PurpleI2P Project
+* Copyright (c) 2013-2024, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -80,7 +80,7 @@ namespace garlic
 
 	void GarlicRoutingSession::CleanupUnconfirmedLeaseSet (uint64_t ts)
 	{
-		if (m_LeaseSetUpdateMsgID && ts*1000LL > m_LeaseSetSubmissionTime + LEASET_CONFIRMATION_TIMEOUT)
+		if (m_LeaseSetUpdateMsgID && ts*1000LL > m_LeaseSetSubmissionTime + LEASESET_CONFIRMATION_TIMEOUT)
 		{
 			if (GetOwner ())
 				GetOwner ()->RemoveDeliveryStatusSession (m_LeaseSetUpdateMsgID);
@@ -232,7 +232,7 @@ namespace garlic
 		if (GetOwner ())
 		{
 			// resubmit non-confirmed LeaseSet
-			if (GetLeaseSetUpdateStatus () == eLeaseSetSubmitted && ts > GetLeaseSetSubmissionTime () + LEASET_CONFIRMATION_TIMEOUT)
+			if (GetLeaseSetUpdateStatus () == eLeaseSetSubmitted && ts > GetLeaseSetSubmissionTime () + LEASESET_CONFIRMATION_TIMEOUT)
 			{
 				SetLeaseSetUpdateStatus (eLeaseSetUpdated);
 				SetSharedRoutingPath (nullptr); // invalidate path since leaseset was not confirmed
@@ -588,7 +588,7 @@ namespace garlic
 		auto it = m_ECIESx25519Tags.find (tag);
 		if (it != m_ECIESx25519Tags.end ())
 		{
-			if (it->second.tagset->HandleNextMessage (buf, len, it->second.index))
+			if (it->second.tagset && it->second.tagset->HandleNextMessage (buf, len, it->second.index))
 				m_LastTagset = it->second.tagset;
 			else
 				LogPrint (eLogError, "Garlic: Can't handle ECIES-X25519-AEAD-Ratchet message");
@@ -709,7 +709,7 @@ namespace garlic
 						else
 							LogPrint (eLogError, "Garlic: Tunnel pool is not set for inbound tunnel");
 						if (tunnel) // we have sent it through an outbound tunnel
-							tunnel->SendTunnelDataMsg (gwHash, gwTunnel, msg);
+							tunnel->SendTunnelDataMsgTo (gwHash, gwTunnel, msg);
 						else
 							LogPrint (eLogWarning, "Garlic: No outbound tunnels available for garlic clove");
 					}
@@ -887,8 +887,7 @@ namespace garlic
 			}
 			else
 			{
-				auto session = it->second.tagset->GetSession ();
-				if (!session || session->IsTerminated())
+				if (it->second.tagset->IsSessionTerminated ())
 				{
 					it = m_ECIESx25519Tags.erase (it);
 					numExpiredTags++;
@@ -1075,7 +1074,7 @@ namespace garlic
 				{
 					auto tunnel = GetTunnelPool ()->GetNextOutboundTunnel ();
 					if (tunnel)
-						tunnel->SendTunnelDataMsg (gwHash, gwTunnel, CreateI2NPMessage (typeID, buf, len - offset, msgID));
+						tunnel->SendTunnelDataMsgTo (gwHash, gwTunnel, CreateI2NPMessage (typeID, buf, len - offset, msgID));
 					else
 						LogPrint (eLogWarning, "Garlic: No outbound tunnels available for garlic clove");
 				}

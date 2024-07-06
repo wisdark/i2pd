@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022-2023, The PurpleI2P Project
+* Copyright (c) 2022-2024, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -25,7 +25,7 @@ namespace i2p
 namespace transport
 {
 	const int SSU2_CONNECT_TIMEOUT = 5; // 5 seconds
-	const int SSU2_TERMINATION_TIMEOUT = 330; // 5.5 minutes
+	const int SSU2_TERMINATION_TIMEOUT = 165; // in seconds
 	const int SSU2_CLOCK_SKEW = 60; // in seconds
 	const int SSU2_CLOCK_THRESHOLD = 15; // in seconds, if more we should adjust
 	const int SSU2_TOKEN_EXPIRATION_TIMEOUT = 9; // for Retry message, in seconds
@@ -36,7 +36,6 @@ namespace transport
 	const size_t SSU2_MAX_PACKET_SIZE = 1500;
 	const size_t SSU2_MIN_PACKET_SIZE = 1280;
 	const int SSU2_HANDSHAKE_RESEND_INTERVAL = 1000; // in milliseconds
-	const int SSU2_RESEND_INTERVAL = 300; // in milliseconds
 	const int SSU2_MAX_NUM_RESENDS = 5;
 	const int SSU2_INCOMPLETE_MESSAGES_CLEANUP_TIMEOUT = 30; // in seconds
 	const int SSU2_MAX_NUM_RECEIVED_I2NP_MSGIDS = 5000; // how many msgID we store for duplicates check
@@ -45,14 +44,16 @@ namespace transport
 	const size_t SSU2_MIN_WINDOW_SIZE = 16; // in packets
 	const size_t SSU2_MAX_WINDOW_SIZE = 256; // in packets
 	const size_t SSU2_MIN_RTO = 100; // in milliseconds
+	const size_t SSU2_INITIAL_RTO = 540; // in milliseconds
 	const size_t SSU2_MAX_RTO = 2500; // in milliseconds
+	const double SSU2_UNKNOWN_RTT = -1;
+	const double SSU2_RTT_EWMA_ALPHA = 0.125;
 	const float SSU2_kAPPA = 1.8;
-	const size_t SSU2_MAX_OUTGOING_QUEUE_SIZE = 500; // in messages
 	const int SSU2_MAX_NUM_ACNT = 255; // acnt, acks or nacks
-	const int SSU2_MAX_NUM_ACK_PACKETS = 510; // 2*255 ack + nack
+	const int SSU2_MAX_NUM_ACK_PACKETS = 511; // ackthrough + acnt + 1 range
 	const int SSU2_MAX_NUM_ACK_RANGES = 32; // to send
 	const uint8_t SSU2_MAX_NUM_FRAGMENTS = 64;
-	const int SSU2_SEND_DATETIME_NUM_PACKETS = 250;
+	const int SSU2_SEND_DATETIME_NUM_PACKETS = 256;
 
 	// flags
 	const uint8_t SSU2_FLAG_IMMEDIATE_ACK_REQUESTED = 0x01;
@@ -238,6 +239,7 @@ namespace transport
 			void SetRemoteEndpoint (const boost::asio::ip::udp::endpoint& ep) { m_RemoteEndpoint = ep; };
 			const boost::asio::ip::udp::endpoint& GetRemoteEndpoint () const { return m_RemoteEndpoint; };
 			i2p::data::RouterInfo::CompatibleTransports GetRemoteTransports () const { return m_RemoteTransports; };
+			i2p::data::RouterInfo::CompatibleTransports GetRemotePeerTestTransports () const { return m_RemotePeerTestTransports; };
 			std::shared_ptr<const i2p::data::RouterInfo::Address> GetAddress () const { return m_Address; };
 			void SetOnEstablished (OnEstablished e) { m_OnEstablished = e; };
 			OnEstablished GetOnEstablished () const { return m_OnEstablished; };
@@ -253,8 +255,10 @@ namespace transport
 			void Done () override;
 			void SendLocalRouterInfo (bool update) override;
 			void SendI2NPMessages (const std::vector<std::shared_ptr<I2NPMessage> >& msgs) override;
+			void MoveSendQueue (std::shared_ptr<SSU2Session> other);
 			uint32_t GetRelayTag () const override { return m_RelayTag; };
-			size_t Resend (uint64_t ts); // return number or resent packets
+			size_t Resend (uint64_t ts); // return number of resent packets
+			uint64_t GetLastResendTime () const { return m_LastResendTime; };
 			bool IsEstablished () const override { return m_State == eSSU2SessionStateEstablished; };
 			uint64_t GetConnID () const { return m_SourceConnID; };
 			SSU2SessionState GetState () const { return m_State; };
@@ -299,6 +303,7 @@ namespace transport
 
 			void HandlePayload (const uint8_t * buf, size_t len);
 			void HandleDateTime (const uint8_t * buf, size_t len);
+			void HandleRouterInfo (const uint8_t * buf, size_t len);
 			void HandleAck (const uint8_t * buf, size_t len);
 			void HandleAckRange (uint32_t firstPacketNum, uint32_t lastPacketNum, uint64_t ts);
 			void HandleAddress (const uint8_t * buf, size_t len);
@@ -308,6 +313,8 @@ namespace transport
 			void AdjustMaxPayloadSize ();
 			RouterStatus GetRouterStatus () const;
 			void SetRouterStatus (RouterStatus status) const;
+			bool GetTestingState () const;
+			void SetTestingState(bool testing) const;
 			std::shared_ptr<const i2p::data::RouterInfo> ExtractRouterInfo (const uint8_t * buf, size_t size);
 			void CreateNonce (uint64_t seqn, uint8_t * nonce);
 			bool UpdateReceivePacketNum (uint32_t packetNum); // for Ack, returns false if duplicate
@@ -321,6 +328,7 @@ namespace transport
 
 			size_t CreateAddressBlock (uint8_t * buf, size_t len, const boost::asio::ip::udp::endpoint& ep);
 			size_t CreateRouterInfoBlock (uint8_t * buf, size_t len, std::shared_ptr<const i2p::data::RouterInfo> r);
+			size_t CreateRouterInfoBlock (uint8_t * buf, size_t len, std::shared_ptr<const i2p::data::RouterInfo::Buffer> riBuffer);
 			size_t CreateAckBlock (uint8_t * buf, size_t len);
 			size_t CreatePaddingBlock (uint8_t * buf, size_t len, size_t minSize = 0);
 			size_t CreateI2NPBlock (uint8_t * buf, size_t len, std::shared_ptr<I2NPMessage>&& msg);
@@ -341,7 +349,7 @@ namespace transport
 			std::unique_ptr<HandshakePacket> m_SentHandshakePacket; // SessionRequest, SessionCreated or SessionConfirmed
 			std::shared_ptr<const i2p::data::RouterInfo::Address> m_Address;
 			boost::asio::ip::udp::endpoint m_RemoteEndpoint;
-			i2p::data::RouterInfo::CompatibleTransports m_RemoteTransports; // for peer tests
+			i2p::data::RouterInfo::CompatibleTransports m_RemoteTransports, m_RemotePeerTestTransports; 
 			uint64_t m_DestConnID, m_SourceConnID;
 			SSU2SessionState m_State;
 			uint8_t m_KeyDataSend[64], m_KeyDataReceive[64];
@@ -354,7 +362,10 @@ namespace transport
 			std::list<std::shared_ptr<I2NPMessage> > m_SendQueue;
 			i2p::I2NPMessagesHandler m_Handler;
 			bool m_IsDataReceived;
-			size_t m_WindowSize, m_RTT, m_RTO;
+			double m_RTT;
+			int m_MsgLocalExpirationTimeout;
+			int m_MsgLocalSemiExpirationTimeout;
+			size_t m_WindowSize, m_RTO;
 			uint32_t m_RelayTag; // between Bob and Charlie
 			OnEstablished m_OnEstablished; // callback from Established
 			boost::asio::deadline_timer m_ConnectTimer;
@@ -362,6 +373,7 @@ namespace transport
 			size_t m_MaxPayloadSize;
 			std::unique_ptr<i2p::data::IdentHash> m_PathChallenge;
 			std::unordered_map<uint32_t, uint32_t> m_ReceivedI2NPMsgIDs; // msgID -> timestamp in seconds
+			uint64_t m_LastResendTime; // in milliseconds
 	};
 
 	inline uint64_t CreateHeaderMask (const uint8_t * kh, const uint8_t * nonce)

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2022, The PurpleI2P Project
+* Copyright (c) 2013-2024, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -52,25 +52,30 @@ namespace stream
 	const size_t STREAMING_MTU_RATCHETS = 1812;
 	const size_t MAX_PACKET_SIZE = 4096;
 	const size_t COMPRESSION_THRESHOLD_SIZE = 66;
-	const int MAX_NUM_RESEND_ATTEMPTS = 6;
-	const int WINDOW_SIZE = 6; // in messages
+	const int MAX_NUM_RESEND_ATTEMPTS = 10;
+	const int INITIAL_WINDOW_SIZE = 10;
 	const int MIN_WINDOW_SIZE = 1;
 	const int MAX_WINDOW_SIZE = 128;
+	const double RTT_EWMA_ALPHA = 0.9;
+	const int MIN_RTO = 20; // in milliseconds
 	const int INITIAL_RTT = 8000; // in milliseconds
 	const int INITIAL_RTO = 9000; // in milliseconds
+	const int INITIAL_PACING_TIME = 1000 * INITIAL_RTT / INITIAL_WINDOW_SIZE; // in microseconds
 	const int MIN_SEND_ACK_TIMEOUT = 2; // in milliseconds
 	const int SYN_TIMEOUT = 200; // how long we wait for SYN after follow-on, in milliseconds
 	const size_t MAX_PENDING_INCOMING_BACKLOG = 128;
 	const int PENDING_INCOMING_TIMEOUT = 10; // in seconds
 	const int MAX_RECEIVE_TIMEOUT = 20; // in seconds
+	const uint16_t DELAY_CHOKING = 60000; // in milliseconds
 
 	struct Packet
 	{
 		size_t len, offset;
 		uint8_t buf[MAX_PACKET_SIZE];
 		uint64_t sendTime;
+		bool resent;
 
-		Packet (): len (0), offset (0), sendTime (0) {};
+		Packet (): len (0), offset (0), sendTime (0), resent (false) {};
 		uint8_t * GetBuffer () { return buf + offset; };
 		size_t GetLength () const { return len - offset; };
 
@@ -80,6 +85,7 @@ namespace stream
 		uint32_t GetAckThrough () const { return bufbe32toh (buf + 12); };
 		uint8_t GetNACKCount () const { return buf[16]; };
 		uint32_t GetNACK (int i) const { return bufbe32toh (buf + 17 + 4 * i); };
+		const uint8_t * GetNACKs () const { return buf + 17; };
 		const uint8_t * GetOption () const { return buf + 17 + GetNACKCount ()*4 + 3; }; // 3 = resendDelay + flags
 		uint16_t GetFlags () const { return bufbe16toh (GetOption () - 2); };
 		uint16_t GetOptionSize () const { return bufbe16toh (GetOption ()); };
@@ -134,7 +140,6 @@ namespace stream
 			SendBufferQueue (): m_Size (0) {};
 			~SendBufferQueue () { CleanUp (); };
 
-			void Add (const uint8_t * buf, size_t len, SendHandler handler);
 			void Add (std::shared_ptr<SendBuffer> buf);
 			size_t Get (uint8_t * buf, size_t len);
 			size_t GetSize () const { return m_Size; };
@@ -175,6 +180,7 @@ namespace stream
 			bool IsEstablished () const { return m_SendStreamID; };
 			StreamStatus GetStatus () const { return m_Status; };
 			StreamingDestination& GetLocalDestination () { return m_LocalDestination; };
+			void ResetRoutingPath ();
 
 			void HandleNextPacket (Packet * packet);
 			void HandlePing (Packet * packet);
@@ -225,17 +231,29 @@ namespace stream
 			template<typename Buffer, typename ReceiveHandler>
 			void HandleReceiveTimer (const boost::system::error_code& ecode, const Buffer& buffer, ReceiveHandler handler, int remainingTimeout);
 
+			void ScheduleSend ();
+			void HandleSendTimer (const boost::system::error_code& ecode);
 			void ScheduleResend ();
 			void HandleResendTimer (const boost::system::error_code& ecode);
+			void ResendPacket ();
+			void ScheduleAck (int timeout);
 			void HandleAckSendTimer (const boost::system::error_code& ecode);
 
+			void UpdatePacingTime ();
+			
 		private:
 
 			boost::asio::io_service& m_Service;
 			uint32_t m_SendStreamID, m_RecvStreamID, m_SequenceNumber;
+			uint32_t m_TunnelsChangeSequenceNumber;
 			int32_t m_LastReceivedSequenceNumber;
+			int32_t m_PreviousReceivedSequenceNumber;
 			StreamStatus m_Status;
 			bool m_IsAckSendScheduled;
+			bool m_IsNAcked;
+			bool m_IsSendTime;
+			bool m_IsWinDropped;
+			bool m_IsTimeOutResend;
 			StreamingDestination& m_LocalDestination;
 			std::shared_ptr<const i2p::data::IdentityEx> m_RemoteIdentity;
 			std::shared_ptr<const i2p::crypto::Verifier> m_TransientVerifier; // in case of offline key
@@ -246,14 +264,14 @@ namespace stream
 			std::queue<Packet *> m_ReceiveQueue;
 			std::set<Packet *, PacketCmp> m_SavedPackets;
 			std::set<Packet *, PacketCmp> m_SentPackets;
-			boost::asio::deadline_timer m_ReceiveTimer, m_ResendTimer, m_AckSendTimer;
+			boost::asio::deadline_timer m_ReceiveTimer, m_SendTimer, m_ResendTimer, m_AckSendTimer;
 			size_t m_NumSentBytes, m_NumReceivedBytes;
 			uint16_t m_Port;
 
-			std::mutex m_SendBufferMutex;
 			SendBufferQueue m_SendBuffer;
-			int m_WindowSize, m_RTT, m_RTO, m_AckDelay;
-			uint64_t m_LastWindowSizeIncreaseTime;
+			double m_RTT;
+			int m_WindowSize, m_RTO, m_AckDelay, m_PrevRTTSample, m_PrevRTT, m_Jitter;
+			uint64_t m_MinPacingTime, m_PacingTime;
 			int m_NumResendAttempts;
 			size_t m_MTU;
 	};
@@ -312,7 +330,7 @@ namespace stream
 			std::unordered_map<uint32_t, std::list<Packet *> > m_SavedPackets; // receiveStreamID->packets, arrived before SYN
 
 			i2p::util::MemoryPool<Packet> m_PacketsPool;
-			i2p::util::MemoryPool<I2NPMessageBuffer<I2NP_MAX_MESSAGE_SIZE> > m_I2NPMsgsPool;
+			i2p::util::MemoryPool<I2NPMessageBuffer<I2NP_MAX_SHORT_MESSAGE_SIZE> > m_I2NPMsgsPool;
 
 		public:
 

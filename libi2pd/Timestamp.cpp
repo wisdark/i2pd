@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2022, The PurpleI2P Project
+* Copyright (c) 2013-2024, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -232,11 +232,34 @@ namespace util
 		return GetLocalHoursSinceEpoch () + g_TimeOffset/3600;
 	}
 
+	uint64_t GetMonotonicMicroseconds()
+	{
+		return std::chrono::duration_cast<std::chrono::microseconds>(
+			std::chrono::steady_clock::now().time_since_epoch()).count();
+	}
+
+	uint64_t GetMonotonicMilliseconds()
+	{
+		return std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::steady_clock::now().time_since_epoch()).count();
+	}
+
+	uint64_t GetMonotonicSeconds ()
+	{
+		return std::chrono::duration_cast<std::chrono::seconds>(
+			std::chrono::steady_clock::now().time_since_epoch()).count();
+	}	
+	
 	void GetCurrentDate (char * date)
 	{
 		GetDateString (GetSecondsSinceEpoch (), date);
 	}
 
+	void GetNextDayDate (char * date)
+	{
+		GetDateString (GetSecondsSinceEpoch () + 24*60*60, date);
+	}	
+	
 	void GetDateString (uint64_t timestamp, char * date)
 	{
 		using clock = std::chrono::system_clock;

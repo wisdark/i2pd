@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2023, The PurpleI2P Project
+* Copyright (c) 2013-2024, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -39,8 +39,10 @@ namespace tunnel
 	const int TUNNEL_CREATION_TIMEOUT = 30; // 30 seconds
 	const int STANDARD_NUM_RECORDS = 4; // in VariableTunnelBuild message
 	const int MAX_NUM_RECORDS = 8;
-	const int HIGH_LATENCY_PER_HOP = 250; // in milliseconds
+	const int UNKNOWN_LATENCY = -1;
+	const int HIGH_LATENCY_PER_HOP = 250000; // in microseconds
 	const int MAX_TUNNEL_MSGS_BATCH_SIZE = 100; // handle messages without interrupt
+	const uint16_t DEFAULT_MAX_NUM_TRANSIT_TUNNELS = 5000;
 	const int TUNNEL_MANAGE_INTERVAL = 15; // in seconds
 	const int TUNNEL_POOLS_MANAGE_INTERVAL = 5; // in seconds
 	const int TUNNEL_MEMORY_POOL_MANAGE_INTERVAL = 120; // in seconds
@@ -64,7 +66,8 @@ namespace tunnel
 
 	class OutboundTunnel;
 	class InboundTunnel;
-	class Tunnel: public TunnelBase
+	class Tunnel: public TunnelBase,
+		 public std::enable_shared_from_this<Tunnel>
 	{
 		struct TunnelHop
 		{
@@ -89,7 +92,7 @@ namespace tunnel
 			i2p::data::RouterInfo::CompatibleTransports GetFarEndTransports () const { return m_FarEndTransports; };
 			TunnelState GetState () const { return m_State; };
 			void SetState (TunnelState state);
-			bool IsEstablished () const { return m_State == eTunnelStateEstablished; };
+			bool IsEstablished () const { return m_State == eTunnelStateEstablished || m_State == eTunnelStateTestFailed; };
 			bool IsFailed () const { return m_State == eTunnelStateFailed; };
 			bool IsRecreated () const { return m_IsRecreated; };
 			void SetRecreated (bool recreated) { m_IsRecreated = recreated; };
@@ -102,18 +105,18 @@ namespace tunnel
 			bool HandleTunnelBuildResponse (uint8_t * msg, size_t len);
 
 			// implements TunnelBase
-			void SendTunnelDataMsg (std::shared_ptr<i2p::I2NPMessage> msg);
-			void EncryptTunnelMsg (std::shared_ptr<const I2NPMessage> in, std::shared_ptr<I2NPMessage> out);
+			void SendTunnelDataMsg (std::shared_ptr<i2p::I2NPMessage> msg) override;
+			void EncryptTunnelMsg (std::shared_ptr<const I2NPMessage> in, std::shared_ptr<I2NPMessage> out) override;
 
 			/** @brief add latency sample */
-			void AddLatencySample(const uint64_t ms) { m_Latency = (m_Latency + ms) >> 1; }
+			void AddLatencySample(const int us) { m_Latency = LatencyIsKnown() ? (m_Latency + us) >> 1 : us; }
 			/** @brief get this tunnel's estimated latency */
-			uint64_t GetMeanLatency() const { return m_Latency; }
+			int GetMeanLatency() const { return (m_Latency + 500) / 1000; }
 			/** @brief return true if this tunnel's latency fits in range [lowerbound, upperbound] */
-			bool LatencyFitsRange(uint64_t lowerbound, uint64_t upperbound) const;
+			bool LatencyFitsRange(int lowerbound, int upperbound) const;
 
-			bool LatencyIsKnown() const { return m_Latency > 0; }
-			bool IsSlow () const { return LatencyIsKnown() && (int)m_Latency > HIGH_LATENCY_PER_HOP*GetNumHops (); }
+			bool LatencyIsKnown() const { return m_Latency != UNKNOWN_LATENCY; }
+			bool IsSlow () const { return LatencyIsKnown() && m_Latency > HIGH_LATENCY_PER_HOP*GetNumHops (); }
 
 			/** visit all hops we currently store */
 			void VisitTunnelHops(TunnelHopVisitor v);
@@ -127,7 +130,7 @@ namespace tunnel
 			TunnelState m_State;
 			i2p::data::RouterInfo::CompatibleTransports m_FarEndTransports;
 			bool m_IsRecreated; // if tunnel is replaced by new, or new tunnel requested to replace
-			uint64_t m_Latency; // in milliseconds
+			int m_Latency; // in microseconds
 	};
 
 	class OutboundTunnel: public Tunnel
@@ -137,15 +140,15 @@ namespace tunnel
 			OutboundTunnel (std::shared_ptr<const TunnelConfig> config):
 				Tunnel (config), m_Gateway (this), m_EndpointIdentHash (config->GetLastIdentHash ()) {};
 
-			void SendTunnelDataMsg (const uint8_t * gwHash, uint32_t gwTunnel, std::shared_ptr<i2p::I2NPMessage> msg);
-			virtual void SendTunnelDataMsg (const std::vector<TunnelMessageBlock>& msgs); // multiple messages
+			void SendTunnelDataMsgTo (const uint8_t * gwHash, uint32_t gwTunnel, std::shared_ptr<i2p::I2NPMessage> msg);
+			virtual void SendTunnelDataMsgs (const std::vector<TunnelMessageBlock>& msgs); // multiple messages
 			const i2p::data::IdentHash& GetEndpointIdentHash () const { return m_EndpointIdentHash; };
 			virtual size_t GetNumSentBytes () const { return m_Gateway.GetNumSentBytes (); };
 
 			// implements TunnelBase
-			void HandleTunnelDataMsg (std::shared_ptr<i2p::I2NPMessage>&& tunnelMsg);
+			void HandleTunnelDataMsg (std::shared_ptr<i2p::I2NPMessage>&& tunnelMsg) override;
 
-			bool IsInbound() const { return false; }
+			bool IsInbound() const override { return false; }
 
 		private:
 
@@ -154,18 +157,25 @@ namespace tunnel
 			i2p::data::IdentHash m_EndpointIdentHash;
 	};
 
-	class InboundTunnel: public Tunnel, public std::enable_shared_from_this<InboundTunnel>
+	class InboundTunnel: public Tunnel
 	{
 		public:
 
 			InboundTunnel (std::shared_ptr<const TunnelConfig> config): Tunnel (config), m_Endpoint (true) {};
-			void HandleTunnelDataMsg (std::shared_ptr<I2NPMessage>&& msg);
+			void HandleTunnelDataMsg (std::shared_ptr<I2NPMessage>&& msg) override;
 			virtual size_t GetNumReceivedBytes () const { return m_Endpoint.GetNumReceivedBytes (); };
-			bool IsInbound() const { return true; }
+			bool IsInbound() const override { return true; }
 
 			// override TunnelBase
-			void Cleanup () { m_Endpoint.Cleanup (); };
+			void Cleanup () override { m_Endpoint.Cleanup (); };
 
+		protected:
+
+			std::shared_ptr<InboundTunnel> GetSharedFromThis () 
+			{
+				return std::static_pointer_cast<InboundTunnel>(shared_from_this ());
+			}
+			
 		private:
 
 			TunnelEndpoint m_Endpoint;
@@ -176,8 +186,8 @@ namespace tunnel
 		public:
 
 			ZeroHopsInboundTunnel ();
-			void SendTunnelDataMsg (std::shared_ptr<i2p::I2NPMessage> msg);
-			size_t GetNumReceivedBytes () const { return m_NumReceivedBytes; };
+			void SendTunnelDataMsg (std::shared_ptr<i2p::I2NPMessage> msg) override;
+			size_t GetNumReceivedBytes () const override { return m_NumReceivedBytes; };
 
 		private:
 
@@ -189,8 +199,8 @@ namespace tunnel
 		public:
 
 			ZeroHopsOutboundTunnel ();
-			void SendTunnelDataMsg (const std::vector<TunnelMessageBlock>& msgs);
-			size_t GetNumSentBytes () const { return m_NumSentBytes; };
+			void SendTunnelDataMsgs (const std::vector<TunnelMessageBlock>& msgs) override;
+			size_t GetNumSentBytes () const override { return m_NumSentBytes; };
 
 		private:
 
@@ -228,6 +238,10 @@ namespace tunnel
 			void StopTunnelPool (std::shared_ptr<TunnelPool> pool);
 
 			std::shared_ptr<I2NPMessage> NewI2NPTunnelMessage (bool endpoint);
+
+			void SetMaxNumTransitTunnels (uint32_t maxNumTransitTunnels);
+			uint32_t GetMaxNumTransitTunnels () const { return m_MaxNumTransitTunnels; };
+			int GetCongestionLevel() const { return m_MaxNumTransitTunnels ? CONGESTION_LEVEL_FULL * m_TransitTunnels.size() / m_MaxNumTransitTunnels : CONGESTION_LEVEL_FULL; }
 
 		private:
 
@@ -287,6 +301,7 @@ namespace tunnel
 			i2p::util::Queue<std::shared_ptr<I2NPMessage> > m_Queue;
 			i2p::util::MemoryPoolMt<I2NPMessageBuffer<I2NP_TUNNEL_ENPOINT_MESSAGE_SIZE> > m_I2NPTunnelEndpointMessagesMemoryPool;
 			i2p::util::MemoryPoolMt<I2NPMessageBuffer<I2NP_TUNNEL_MESSAGE_SIZE> > m_I2NPTunnelMessagesMemoryPool;
+			uint32_t m_MaxNumTransitTunnels;
 			// count of tunnels for total TCSR algorithm
 			int m_TotalNumSuccesiveTunnelCreations, m_TotalNumFailedTunnelCreations;
 			double m_TunnelCreationSuccessRate;
@@ -305,6 +320,7 @@ namespace tunnel
 
 			int GetQueueSize () { return m_Queue.GetSize (); };
 			int GetTunnelCreationSuccessRate () const { return std::round(m_TunnelCreationSuccessRate * 100); } // in percents
+			double GetPreciseTunnelCreationSuccessRate () const { return m_TunnelCreationSuccessRate * 100; } // in percents
 			int GetTotalTunnelCreationSuccessRate () const // in percents
 			{
 				int totalNum = m_TotalNumSuccesiveTunnelCreations + m_TotalNumFailedTunnelCreations;

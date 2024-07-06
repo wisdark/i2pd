@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2022, The PurpleI2P Project
+* Copyright (c) 2013-2024, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -14,7 +14,8 @@
 #include <mutex>
 #include <memory>
 #include <map>
-#include <set>
+#include <unordered_map>
+#include <unordered_set>
 #include <string>
 #include <functional>
 #include <boost/asio.hpp>
@@ -83,6 +84,8 @@ namespace client
 	// streaming
 	const char I2CP_PARAM_STREAMING_INITIAL_ACK_DELAY[] = "i2p.streaming.initialAckDelay";
 	const int DEFAULT_INITIAL_ACK_DELAY = 200; // milliseconds
+	const char I2CP_PARAM_STREAMING_MAX_OUTBOUND_SPEED[] = "i2p.streaming.maxOutboundSpeed"; // bytes/sec
+	const int DEFAULT_MAX_OUTBOUND_SPEED = 1730000000; // no more than 1.73 Gbytes/s
 	const char I2CP_PARAM_STREAMING_ANSWER_PINGS[] = "i2p.streaming.answerPings";
 	const int DEFAULT_ANSWER_PINGS = true;
 
@@ -96,7 +99,7 @@ namespace client
 		struct LeaseSetRequest
 		{
 			LeaseSetRequest (boost::asio::io_service& service): requestTime (0), requestTimeoutTimer (service) {};
-			std::set<i2p::data::IdentHash> excluded;
+			std::unordered_set<i2p::data::IdentHash> excluded;
 			uint64_t requestTime;
 			boost::asio::deadline_timer requestTimeoutTimer;
 			std::list<RequestComplete> requestComplete;
@@ -175,6 +178,7 @@ namespace client
 
 			void RequestLeaseSet (const i2p::data::IdentHash& dest, RequestComplete requestComplete, std::shared_ptr<const i2p::data::BlindedPublicKey> requestedBlindedKey = nullptr);
 			bool SendLeaseSetRequest (const i2p::data::IdentHash& dest, std::shared_ptr<const i2p::data::RouterInfo> nextFloodfill, std::shared_ptr<LeaseSetRequest> request);
+			void SendNextLeaseSetRequest (const i2p::data::IdentHash& key, std::shared_ptr<LeaseSetRequest> request);
 			void HandleRequestTimoutTimer (const boost::system::error_code& ecode, const i2p::data::IdentHash& dest);
 			void HandleCleanupTimer (const boost::system::error_code& ecode);
 			void CleanupRemoteLeaseSets ();
@@ -184,8 +188,8 @@ namespace client
 
 			boost::asio::io_service& m_Service;
 			mutable std::mutex m_RemoteLeaseSetsMutex;
-			std::map<i2p::data::IdentHash, std::shared_ptr<i2p::data::LeaseSet> > m_RemoteLeaseSets;
-			std::map<i2p::data::IdentHash, std::shared_ptr<LeaseSetRequest> > m_LeaseSetRequests;
+			std::unordered_map<i2p::data::IdentHash, std::shared_ptr<i2p::data::LeaseSet> > m_RemoteLeaseSets;
+			std::unordered_map<i2p::data::IdentHash, std::shared_ptr<LeaseSetRequest> > m_LeaseSetRequests;
 
 			std::shared_ptr<i2p::tunnel::TunnelPool> m_Pool;
 			std::mutex m_LeaseSetMutex;
@@ -193,7 +197,7 @@ namespace client
 			bool m_IsPublic;
 			uint32_t m_PublishReplyToken;
 			uint64_t m_LastSubmissionTime; // in seconds
-			std::set<i2p::data::IdentHash> m_ExcludedFloodfills; // for publishing
+			std::unordered_set<i2p::data::IdentHash> m_ExcludedFloodfills; // for publishing
 
 			boost::asio::deadline_timer m_PublishConfirmationTimer, m_PublishVerificationTimer,
 				m_PublishDelayTimer, m_CleanupTimer;
@@ -241,15 +245,15 @@ namespace client
 			int GetRefCounter () const { return m_RefCounter; };
 
 			// streaming
-			std::shared_ptr<i2p::stream::StreamingDestination> CreateStreamingDestination (int port, bool gzip = true); // additional
-			std::shared_ptr<i2p::stream::StreamingDestination> GetStreamingDestination (int port = 0) const;
-			std::shared_ptr<i2p::stream::StreamingDestination> RemoveStreamingDestination (int port);
+			std::shared_ptr<i2p::stream::StreamingDestination> CreateStreamingDestination (uint16_t port, bool gzip = true); // additional
+			std::shared_ptr<i2p::stream::StreamingDestination> GetStreamingDestination (uint16_t port = 0) const;
+			std::shared_ptr<i2p::stream::StreamingDestination> RemoveStreamingDestination (uint16_t port);
 			// following methods operate with default streaming destination
-			void CreateStream (StreamRequestComplete streamRequestComplete, const i2p::data::IdentHash& dest, int port = 0);
-			void CreateStream (StreamRequestComplete streamRequestComplete, std::shared_ptr<const i2p::data::BlindedPublicKey> dest, int port = 0);
-			std::shared_ptr<i2p::stream::Stream> CreateStream (const i2p::data::IdentHash& dest, int port = 0); // sync
-			std::shared_ptr<i2p::stream::Stream> CreateStream (std::shared_ptr<const i2p::data::BlindedPublicKey> dest, int port = 0); // sync
-			std::shared_ptr<i2p::stream::Stream> CreateStream (std::shared_ptr<const i2p::data::LeaseSet> remote, int port = 0);
+			void CreateStream (StreamRequestComplete streamRequestComplete, const i2p::data::IdentHash& dest, uint16_t port = 0);
+			void CreateStream (StreamRequestComplete streamRequestComplete, std::shared_ptr<const i2p::data::BlindedPublicKey> dest, uint16_t port = 0);
+			std::shared_ptr<i2p::stream::Stream> CreateStream (const i2p::data::IdentHash& dest, uint16_t port = 0); // sync
+			std::shared_ptr<i2p::stream::Stream> CreateStream (std::shared_ptr<const i2p::data::BlindedPublicKey> dest, uint16_t port = 0); // sync
+			std::shared_ptr<i2p::stream::Stream> CreateStream (std::shared_ptr<const i2p::data::LeaseSet> remote, uint16_t port = 0);
 			void SendPing (const i2p::data::IdentHash& to);
 			void SendPing (std::shared_ptr<const i2p::data::BlindedPublicKey> to);
 			void AcceptStreams (const i2p::stream::StreamingDestination::Acceptor& acceptor);
@@ -257,6 +261,7 @@ namespace client
 			bool IsAcceptingStreams () const;
 			void AcceptOnce (const i2p::stream::StreamingDestination::Acceptor& acceptor);
 			int GetStreamingAckDelay () const { return m_StreamingAckDelay; }
+			int GetStreamingOutboundSpeed () const { return m_StreamingOutboundSpeed; }
 			bool IsStreamingAnswerPings () const { return m_IsStreamingAnswerPings; }
 
 			// datagram
@@ -285,7 +290,7 @@ namespace client
 			void ReadAuthKey (const std::string& group, const std::map<std::string, std::string> * params);
 
 			template<typename Dest>
-			std::shared_ptr<i2p::stream::Stream> CreateStreamSync (const Dest& dest, int port);
+			std::shared_ptr<i2p::stream::Stream> CreateStreamSync (const Dest& dest, uint16_t port);
 
 		private:
 
@@ -294,9 +299,11 @@ namespace client
 			std::unique_ptr<EncryptionKey> m_ECIESx25519EncryptionKey;
 
 			int m_StreamingAckDelay;
+			int m_StreamingOutboundSpeed;
 			bool m_IsStreamingAnswerPings;
 			std::shared_ptr<i2p::stream::StreamingDestination> m_StreamingDestination; // default
 			std::map<uint16_t, std::shared_ptr<i2p::stream::StreamingDestination> > m_StreamingDestinationsByPorts;
+			std::shared_ptr<i2p::stream::StreamingDestination> m_LastStreamingDestination; uint16_t m_LastPort; // for server tunnels
 			i2p::datagram::DatagramDestination * m_DatagramDestination;
 			int m_RefCounter; // how many clients(tunnels) use this destination
 

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2022, The PurpleI2P Project
+* Copyright (c) 2013-2024, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -8,6 +8,11 @@
 
 #include <algorithm>
 #include <boost/filesystem.hpp>
+
+#if defined(MAC_OSX)
+#include <boost/system/system_error.hpp>
+#include <TargetConditionals.h>
+#endif
 
 #ifdef _WIN32
 #include <shlobj.h>
@@ -49,7 +54,11 @@ namespace fs {
 
 	const std::string GetUTF8DataDir () {
 #ifdef _WIN32
+#if (BOOST_VERSION >= 108500)
+		boost::filesystem::path path (dataDir);
+#else
 		boost::filesystem::wpath path (dataDir);
+#endif
 		auto loc = boost::filesystem::path::imbue(std::locale( std::locale(), new std::codecvt_utf8_utf16<wchar_t>() ) ); // convert path to UTF-8
 		auto dataDirUTF8 = path.string();
 		boost::filesystem::path::imbue(loc); // Return locale settings back
@@ -82,7 +91,11 @@ namespace fs {
 			}
 			else
 			{
+#if (BOOST_VERSION >= 108500)
+				dataDir = boost::filesystem::path(commonAppData).string() + "\\" + appName;
+#else
 				dataDir = boost::filesystem::wpath(commonAppData).string() + "\\" + appName;
+#endif
 			}
 #else
 			dataDir = "/var/lib/" + appName;
@@ -107,7 +120,11 @@ namespace fs {
 		}
 		else
 		{
+#if (BOOST_VERSION >= 108500)
+			auto execPath = boost::filesystem::path(localAppData).parent_path();
+#else
 			auto execPath = boost::filesystem::wpath(localAppData).parent_path();
+#endif
 
 			// if config file exists in .exe's folder use it
 			if(boost::filesystem::exists(execPath/"i2pd.conf")) // TODO: magic string
@@ -126,7 +143,11 @@ namespace fs {
 				}
 				else
 				{
+#if (BOOST_VERSION >= 108500)
+					dataDir = boost::filesystem::path(localAppData).string() + "\\" + appName;
+#else
 					dataDir = boost::filesystem::wpath(localAppData).string() + "\\" + appName;
+#endif
 				}
 			}
 		}
@@ -135,6 +156,14 @@ namespace fs {
 		char *home = getenv("HOME");
 		dataDir = (home != NULL && strlen(home) > 0) ? home : "";
 		dataDir += "/Library/Application Support/" + appName;
+		return;
+#elif defined(__HAIKU__)
+		char *home = getenv("HOME");
+		if (home != NULL && strlen(home) > 0) {
+			dataDir = std::string(home) + "/config/settings/" + appName;
+		} else {
+			dataDir = "/tmp/" + appName;
+		}
 		return;
 #else /* other unix */
 #if defined(ANDROID)
@@ -243,8 +272,22 @@ namespace fs {
 			auto p = root + i2p::fs::dirSep + prefix1 + chars[i];
 			if (boost::filesystem::exists(p))
 				continue;
+#if TARGET_OS_SIMULATOR
+			// ios simulator fs says it is case sensitive, but it is not
+			boost::system::error_code ec;
+			if (boost::filesystem::create_directory(p, ec))
+				continue;
+			switch (ec.value()) {
+				case boost::system::errc::file_exists:
+				case boost::system::errc::success:
+					continue;
+				default:
+					throw boost::system::system_error( ec, __func__ );
+			}
+#else
 			if (boost::filesystem::create_directory(p))
 				continue; /* ^ throws exception on failure */
+#endif
 			return false;
 		}
 		return true;

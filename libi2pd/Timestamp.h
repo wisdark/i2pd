@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2022, The PurpleI2P Project
+* Copyright (c) 2013-2024, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -24,7 +24,12 @@ namespace util
 	uint32_t GetMinutesSinceEpoch ();
 	uint32_t GetHoursSinceEpoch ();
 
-	void GetCurrentDate (char * date); // returns date as YYYYMMDD string, 9 bytes
+	uint64_t GetMonotonicMicroseconds ();
+	uint64_t GetMonotonicMilliseconds ();
+	uint64_t GetMonotonicSeconds ();
+	
+	void GetCurrentDate (char * date); // returns UTC date as YYYYMMDD string, 9 bytes
+	void GetNextDayDate (char * date); // returns next UTC day as YYYYMMDD string, 9 bytes
 	void GetDateString (uint64_t timestamp, char * date); // timestamp is seconds since epoch, returns date as YYYYMMDD string, 9 bytes
 	void AdjustTimeOffset (int64_t offset); // in seconds from current
 

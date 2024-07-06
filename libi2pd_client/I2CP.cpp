@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2022, The PurpleI2P Project
+* Copyright (c) 2013-2023, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -230,7 +230,7 @@ namespace client
 					remoteLease->tunnelGateway, remoteLease->tunnelID,
 					garlic
 				});
-			outboundTunnel->SendTunnelDataMsg (msgs);
+			outboundTunnel->SendTunnelDataMsgs (msgs);
 			return true;
 		}
 		else
@@ -936,7 +936,7 @@ namespace client
 		}
 	}
 
-	I2CPServer::I2CPServer (const std::string& interface, int port, bool isSingleThread):
+	I2CPServer::I2CPServer (const std::string& interface, uint16_t port, bool isSingleThread):
 		RunnableService ("I2CP"), m_IsSingleThread (isSingleThread),
 		m_Acceptor (GetIOService (),
 		boost::asio::ip::tcp::endpoint(boost::asio::ip::address::from_string(interface), port))
