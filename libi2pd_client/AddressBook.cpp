@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2023, The PurpleI2P Project
+* Copyright (c) 2013-2024, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -15,7 +15,6 @@
 #include <condition_variable>
 #include <openssl/rand.h>
 #include <boost/algorithm/string.hpp>
-#include <boost/filesystem.hpp>
 #include "Base.h"
 #include "util.h"
 #include "Identity.h"
@@ -26,6 +25,14 @@
 #include "ClientContext.h"
 #include "AddressBook.h"
 #include "Config.h"
+
+#if STD_FILESYSTEM
+#include <filesystem>
+namespace fs_lib = std::filesystem;
+#else
+#include <boost/filesystem.hpp>
+namespace fs_lib = boost::filesystem;
+#endif
 
 namespace i2p
 {
@@ -266,11 +273,11 @@ namespace client
 	void AddressBookFilesystemStorage::ResetEtags ()
 	{
 		LogPrint (eLogError, "Addressbook: Resetting eTags");
-		for (boost::filesystem::directory_iterator it (etagsPath); it != boost::filesystem::directory_iterator (); ++it)
+		for (fs_lib::directory_iterator it (etagsPath); it != fs_lib::directory_iterator (); ++it)
 		{
-			if (!boost::filesystem::is_regular_file (it->status ()))
+			if (!fs_lib::is_regular_file (it->status ()))
 				continue;
-			boost::filesystem::remove (it->path ());
+			fs_lib::remove (it->path ());
 		}
 	}
 
@@ -298,7 +305,7 @@ namespace client
 		identHash = hash;
 	}
 
-	AddressBook::AddressBook (): m_Storage(nullptr), m_IsLoaded (false), m_IsDownloading (false),
+	AddressBook::AddressBook (): m_Storage(nullptr), m_IsLoaded (false),
 		m_NumRetries (0), m_DefaultSubscription (nullptr), m_SubscriptionsUpdateTimer (nullptr),
 		m_IsEnabled (true)
 	{
@@ -337,20 +344,28 @@ namespace client
 			delete m_SubscriptionsUpdateTimer;
 			m_SubscriptionsUpdateTimer = nullptr;
 		}
-		if (m_IsDownloading)
+		bool isDownloading = m_Downloading.valid ();
+		if (isDownloading)
 		{
-			LogPrint (eLogInfo, "Addressbook: Subscriptions are downloading, abort");
-			for (int i = 0; i < 30; i++)
-			{
-				if (!m_IsDownloading)
+			if (m_Downloading.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+				isDownloading = false;
+			else	
+			{	
+				LogPrint (eLogInfo, "Addressbook: Subscriptions are downloading, abort");
+				for (int i = 0; i < 30; i++)
 				{
-					LogPrint (eLogInfo, "Addressbook: Subscriptions download complete");
-					break;
+					if (m_Downloading.wait_for(std::chrono::seconds(1)) == std::future_status::ready) // wait for 1 seconds
+					{
+						isDownloading = false;
+						LogPrint (eLogInfo, "Addressbook: Subscriptions download complete");
+						break;
+					}
 				}
-				std::this_thread::sleep_for (std::chrono::seconds (1)); // wait for 1 seconds
-			}
-			LogPrint (eLogError, "Addressbook: Subscription download timeout");
-			m_IsDownloading = false;
+			}	
+			if (!isDownloading)
+				m_Downloading.get ();
+			else
+				LogPrint (eLogError, "Addressbook: Subscription download timeout");
 		}
 		if (m_Storage)
 		{
@@ -434,7 +449,7 @@ namespace client
 			auto ident = std::make_shared<i2p::data::IdentityEx>();
 			if (ident->FromBase64 (jump))
 			{
-				m_Storage->AddAddress (ident);
+				if (m_Storage) m_Storage->AddAddress (ident);
 				m_Addresses[address] = std::make_shared<Address>(ident->GetIdentHash ());
 				LogPrint (eLogInfo, "Addressbook: Added ", address," -> ", ToAddress(ident->GetIdentHash ()));
 			}
@@ -445,18 +460,19 @@ namespace client
 
 	void AddressBook::InsertFullAddress (std::shared_ptr<const i2p::data::IdentityEx> address)
 	{
-		m_Storage->AddAddress (address);
+		if (m_Storage) m_Storage->AddAddress (address);
 	}
 
 	std::shared_ptr<const i2p::data::IdentityEx> AddressBook::GetFullAddress (const std::string& address)
 	{
 		auto addr = GetAddress (address);
 		if (!addr || !addr->IsIdentHash ()) return nullptr;
-		return m_Storage->GetAddress (addr->identHash);
+		return m_Storage ? m_Storage->GetAddress (addr->identHash) : nullptr;
 	}
 
 	void AddressBook::LoadHosts ()
 	{
+		if (!m_Storage) return;
 		if (m_Storage->Load (m_Addresses) > 0)
 		{
 			m_IsLoaded = true;
@@ -527,15 +543,18 @@ namespace client
 						ident->GetSigningKeyType () != i2p::data::SIGNING_KEY_TYPE_DSA_SHA1) // don't replace by DSA
 					{
 						it->second->identHash = ident->GetIdentHash ();
-						m_Storage->AddAddress (ident);
-						m_Storage->RemoveAddress (it->second->identHash);
+						if (m_Storage)
+						{	
+							m_Storage->AddAddress (ident);
+							m_Storage->RemoveAddress (it->second->identHash);
+						}	
 						LogPrint (eLogInfo, "Addressbook: Updated host: ", name);
 					}
 				}
 				else
 				{
 					m_Addresses.emplace (name, std::make_shared<Address>(ident->GetIdentHash ()));
-					m_Storage->AddAddress (ident);
+					if (m_Storage) m_Storage->AddAddress (ident);
 					if (is_update)
 						LogPrint (eLogInfo, "Addressbook: Added new host: ", name);
 				}
@@ -547,7 +566,7 @@ namespace client
 		if (numAddresses > 0)
 		{
 			if (!incomplete) m_IsLoaded = true;
-			m_Storage->Save (m_Addresses);
+			if (m_Storage) m_Storage->Save (m_Addresses);
 		}
 		return !incomplete;
 	}
@@ -571,16 +590,15 @@ namespace client
 			}
 			else
 			{
-				LogPrint (eLogInfo, "Addressbook: Loading subscriptions from config file");
+				LogPrint (eLogInfo, "Addressbook: Loading subscriptions from config");
 				// using config file items
 				std::string subscriptionURLs; i2p::config::GetOption("addressbook.subscriptions", subscriptionURLs);
 				std::vector<std::string> subsList;
 				boost::split(subsList, subscriptionURLs, boost::is_any_of(","), boost::token_compress_on);
 
 				for (const auto& s: subsList)
-				{
-					m_Subscriptions.push_back (std::make_shared<AddressBookSubscription> (*this, s));
-				}
+					if (!s.empty ())
+						m_Subscriptions.push_back (std::make_shared<AddressBookSubscription> (*this, s));
 				LogPrint (eLogInfo, "Addressbook: ", m_Subscriptions.size (), " subscriptions urls loaded");
 			}
 		}
@@ -634,7 +652,6 @@ namespace client
 
 	void AddressBook::DownloadComplete (bool success, const i2p::data::IdentHash& subscription, const std::string& etag, const std::string& lastModified)
 	{
-		m_IsDownloading = false;
 		m_NumRetries++;
 		int nextUpdateTimeout = m_NumRetries*CONTINIOUS_SUBSCRIPTION_RETRY_TIMEOUT;
 		if (m_NumRetries > CONTINIOUS_SUBSCRIPTION_MAX_NUM_RETRIES || nextUpdateTimeout > CONTINIOUS_SUBSCRIPTION_UPDATE_TIMEOUT)
@@ -689,7 +706,13 @@ namespace client
 				LogPrint(eLogWarning, "Addressbook: Missing local destination, skip subscription update");
 				return;
 			}
-			if (!m_IsDownloading && dest->IsReady ())
+			bool isDownloading = m_Downloading.valid ();
+			if (isDownloading && m_Downloading.wait_for(std::chrono::seconds(0)) == std::future_status::ready) // still active?
+			{
+				m_Downloading.get ();
+				isDownloading = false;
+			}	
+			if (!isDownloading && dest->IsReady ())
 			{
 				if (!m_IsLoaded)
 				{
@@ -698,17 +721,15 @@ namespace client
 					std::string defaultSubURL; i2p::config::GetOption("addressbook.defaulturl", defaultSubURL);
 					if (!m_DefaultSubscription)
 						m_DefaultSubscription = std::make_shared<AddressBookSubscription>(*this, defaultSubURL);
-					m_IsDownloading = true;
-					std::thread load_hosts(std::bind (&AddressBookSubscription::CheckUpdates, m_DefaultSubscription));
-					load_hosts.detach(); // TODO: use join
+					m_Downloading = std::async (std::launch::async,
+						std::bind (&AddressBookSubscription::CheckUpdates, m_DefaultSubscription));
 				}
 				else if (!m_Subscriptions.empty ())
 				{
 					// pick random subscription
 					auto ind = rand () % m_Subscriptions.size();
-					m_IsDownloading = true;
-					std::thread load_hosts(std::bind (&AddressBookSubscription::CheckUpdates, m_Subscriptions[ind]));
-					load_hosts.detach(); // TODO: use join
+					m_Downloading = std::async (std::launch::async,
+						std::bind (&AddressBookSubscription::CheckUpdates, m_Subscriptions[ind]));
 				}
 			}
 			else
@@ -812,7 +833,7 @@ namespace client
 		}
 	}
 
-	AddressBookSubscription::AddressBookSubscription (AddressBook& book, const std::string& link):
+	AddressBookSubscription::AddressBookSubscription (AddressBook& book, std::string_view link):
 		m_Book (book), m_Link (link)
 	{
 	}

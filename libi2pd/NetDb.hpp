@@ -39,6 +39,7 @@ namespace data
 {
 	const int NETDB_MIN_ROUTERS = 90;
 	const int NETDB_MIN_FLOODFILLS = 5;
+	const int NETDB_MIN_TRANSPORTS = 10 ; // otherwise assume offline
 	const int NETDB_NUM_FLOODFILLS_THRESHOLD = 1200;
 	const int NETDB_NUM_ROUTERS_THRESHOLD = 4*NETDB_NUM_FLOODFILLS_THRESHOLD;
 	const int NETDB_TUNNEL_CREATION_RATE_THRESHOLD = 10; // in %
@@ -87,7 +88,7 @@ namespace data
 			void RequestDestination (const IdentHash& destination, RequestedDestination::RequestComplete requestComplete = nullptr, bool direct = true);
 			
 			std::shared_ptr<const RouterInfo> GetRandomRouter () const;
-			std::shared_ptr<const RouterInfo> GetRandomRouter (std::shared_ptr<const RouterInfo> compatibleWith, bool reverse, bool endpoint) const;
+			std::shared_ptr<const RouterInfo> GetRandomRouter (std::shared_ptr<const RouterInfo> compatibleWith, bool reverse, bool endpoint, bool clientTunnel) const;
 			std::shared_ptr<const RouterInfo> GetHighBandwidthRandomRouter (std::shared_ptr<const RouterInfo> compatibleWith, bool reverse, bool endpoint) const;
 			std::shared_ptr<const RouterInfo> GetRandomSSU2PeerTestRouter (bool v4, const std::unordered_set<IdentHash>& excluded) const;
 			std::shared_ptr<const RouterInfo> GetRandomSSU2Introducer (bool v4, const std::unordered_set<IdentHash>& excluded) const;
@@ -127,12 +128,12 @@ namespace data
 			}
 			bool PopulateRouterInfoBuffer (std::shared_ptr<RouterInfo> r);
 			std::shared_ptr<RouterInfo::Address> NewRouterInfoAddress () { return m_RouterInfoAddressesPool.AcquireSharedMt (); };
-			boost::shared_ptr<RouterInfo::Addresses> NewRouterInfoAddresses ()
+			RouterInfo::AddressesPtr NewRouterInfoAddresses ()
 			{
-				return boost::shared_ptr<RouterInfo::Addresses>(m_RouterInfoAddressVectorsPool.AcquireMt (),
+				return RouterInfo::AddressesPtr{m_RouterInfoAddressVectorsPool.AcquireMt (),
 					std::bind <void (i2p::util::MemoryPoolMt<RouterInfo::Addresses>::*)(RouterInfo::Addresses *)>
 						(&i2p::util::MemoryPoolMt<RouterInfo::Addresses>::ReleaseMt,
-						&m_RouterInfoAddressVectorsPool, std::placeholders::_1));
+						&m_RouterInfoAddressVectorsPool, std::placeholders::_1)};
 			};
 			std::shared_ptr<Lease> NewLease (const Lease& lease) { return m_LeasesPool.AcquireSharedMt (lease); };
 			std::shared_ptr<IdentityEx> NewIdentity (const uint8_t * buf, size_t len) { return m_IdentitiesPool.AcquireSharedMt (buf, len); };

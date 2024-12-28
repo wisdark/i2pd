@@ -13,6 +13,7 @@
 #include <string.h>
 #include <unordered_set>
 #include <memory>
+#include <list>
 #include <functional>
 #include "Crypto.h"
 #include "I2PEndian.h"
@@ -107,7 +108,6 @@ namespace i2p
 
 	enum I2NPMessageType
 	{
-		eI2NPDummyMsg = 0,
 		eI2NPDatabaseStore = 1,
 		eI2NPDatabaseLookup = 2,
 		eI2NPDatabaseSearchReply = 3,
@@ -316,7 +316,6 @@ namespace tunnel
 	std::shared_ptr<I2NPMessage> CreateTunnelGatewayMsg (uint32_t tunnelID, std::shared_ptr<I2NPMessage> msg);
 
 	size_t GetI2NPMessageLength (const uint8_t * msg, size_t len);
-	void HandleTunnelBuildI2NPMessage (std::shared_ptr<I2NPMessage> msg);
 	void HandleI2NPMessage (std::shared_ptr<I2NPMessage> msg);
 
 	class I2NPMessagesHandler
@@ -329,7 +328,7 @@ namespace tunnel
 
 		private:
 
-			std::vector<std::shared_ptr<I2NPMessage> > m_TunnelMsgs, m_TunnelGatewayMsgs;
+			std::list<std::shared_ptr<I2NPMessage> > m_TunnelMsgs, m_TunnelGatewayMsgs;
 	};
 }
 

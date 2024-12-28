@@ -15,8 +15,11 @@
 #include <vector>
 #include <array>
 #include <iostream>
+#include <memory>
 #include <boost/asio.hpp>
+#ifndef __cpp_lib_atomic_shared_ptr
 #include <boost/shared_ptr.hpp>
+#endif
 #include "Identity.h"
 #include "Profiling.h"
 #include "Family.h"
@@ -40,8 +43,8 @@ namespace data
 	const char CAPS_FLAG_LOW_BANDWIDTH1   = 'K'; /*   < 12 KBps */
 	const char CAPS_FLAG_LOW_BANDWIDTH2   = 'L'; /*  12-48 KBps */
 	const char CAPS_FLAG_LOW_BANDWIDTH3  = 'M'; /*  48-64 KBps */
-	const char CAPS_FLAG_HIGH_BANDWIDTH1  = 'N'; /*  64-128 KBps */
-	const char CAPS_FLAG_HIGH_BANDWIDTH2  = 'O'; /* 128-256 KBps */
+	const char CAPS_FLAG_LOW_BANDWIDTH4  = 'N'; /*  64-128 KBps */
+	const char CAPS_FLAG_HIGH_BANDWIDTH  = 'O'; /* 128-256 KBps */
 	const char CAPS_FLAG_EXTRA_BANDWIDTH1 = 'P'; /* 256-2048 KBps */
 	const char CAPS_FLAG_EXTRA_BANDWIDTH2 = 'X'; /*   > 2048 KBps */
 	// bandwidth limits in kBps
@@ -199,7 +202,11 @@ namespace data
 			};
 
 			typedef std::array<std::shared_ptr<Address>, eNumTransports> Addresses;
-
+#ifdef __cpp_lib_atomic_shared_ptr
+			typedef std::shared_ptr<Addresses> AddressesPtr;
+#else
+			typedef boost::shared_ptr<Addresses> AddressesPtr;
+#endif			
 			RouterInfo (const std::string& fullPath);
 			RouterInfo (const RouterInfo& ) = default;
 			RouterInfo& operator=(const RouterInfo& ) = default;
@@ -214,7 +221,7 @@ namespace data
 			int GetVersion () const { return m_Version; };
 			virtual void SetProperty (const std::string& key, const std::string& value) {};
 			virtual void ClearProperties () {};
-			boost::shared_ptr<Addresses> GetAddresses () const; // should be called for local RI only, otherwise must return shared_ptr
+			AddressesPtr GetAddresses () const; // should be called for local RI only, otherwise must return shared_ptr
 			std::shared_ptr<const Address> GetNTCP2V4Address () const;
 			std::shared_ptr<const Address> GetNTCP2V6Address () const;
 			std::shared_ptr<const Address> GetPublishedNTCP2V4Address () const;
@@ -271,6 +278,7 @@ namespace data
 			bool IsHighCongestion (bool highBandwidth) const;
 
 			uint8_t GetCaps () const { return m_Caps; };
+			char GetBandwidthCap() const { return m_BandwidthCap; };
 			void SetCaps (uint8_t caps) { m_Caps = caps; };
 
 			Congestion GetCongestion () const { return m_Congestion; };
@@ -282,9 +290,11 @@ namespace data
 			const uint8_t * GetBuffer () const { return m_Buffer ? m_Buffer->data () : nullptr; };
 			const uint8_t * LoadBuffer (const std::string& fullPath); // load if necessary
 			size_t GetBufferLen () const { return m_Buffer ? m_Buffer->GetBufferLen () : 0; };
-			void DeleteBuffer () { m_Buffer = nullptr; };
+			void DeleteBuffer () { m_Buffer = nullptr; m_IsBufferScheduledToDelete = false; };
 			std::shared_ptr<Buffer> GetSharedBuffer () const { return m_Buffer; };	
 			std::shared_ptr<Buffer> CopyBuffer () const;
+			void ScheduleBufferToDelete () { m_IsBufferScheduledToDelete = true; };
+			bool IsBufferScheduledToDelete () const { return m_IsBufferScheduledToDelete; };
 
 			bool IsUpdated () const { return m_IsUpdated; };
 			void SetUpdated (bool updated) { m_IsUpdated = updated; };
@@ -332,7 +342,7 @@ namespace data
 			std::shared_ptr<const Address> GetAddress (Filter filter) const;
 			virtual std::shared_ptr<Buffer> NewBuffer () const;
 			virtual std::shared_ptr<Address> NewAddress () const;
-			virtual boost::shared_ptr<Addresses> NewAddresses () const;
+			virtual AddressesPtr NewAddresses () const;
 			virtual std::shared_ptr<IdentityEx> NewIdentity (const uint8_t * buf, size_t len) const;
 
 		private:
@@ -341,13 +351,22 @@ namespace data
 			std::shared_ptr<const IdentityEx> m_RouterIdentity;
 			std::shared_ptr<Buffer> m_Buffer;
 			uint64_t m_Timestamp; // in milliseconds
-			boost::shared_ptr<Addresses> m_Addresses; // TODO: use std::shared_ptr and std::atomic_store for gcc >= 4.9
-			bool m_IsUpdated, m_IsUnreachable, m_IsFloodfill;
+#ifdef __cpp_lib_atomic_shared_ptr
+			std::atomic<AddressesPtr> m_Addresses;
+#else		
+			AddressesPtr m_Addresses;
+#endif		
+			bool m_IsUpdated, m_IsUnreachable, m_IsFloodfill, m_IsBufferScheduledToDelete;
 			CompatibleTransports m_SupportedTransports, m_ReachableTransports, m_PublishedTransports;
 			uint8_t m_Caps;
+			char m_BandwidthCap;
 			int m_Version;
 			Congestion m_Congestion;
 			mutable std::shared_ptr<RouterProfile> m_Profile;
+
+		public:
+
+			static std::string GetTransportName (SupportedTransports tr);
 	};
 
 	class LocalRouterInfo: public RouterInfo
@@ -367,6 +386,7 @@ namespace data
 			
 			bool AddSSU2Introducer (const Introducer& introducer, bool v4);
 			bool RemoveSSU2Introducer (const IdentHash& h, bool v4);
+			bool UpdateSSU2Introducer (const IdentHash& h, bool v4, uint32_t iTag, uint32_t iExp);
 
 		private:
 
@@ -375,7 +395,7 @@ namespace data
 			void WriteString (const std::string& str, std::ostream& s) const;
 			std::shared_ptr<Buffer> NewBuffer () const override;
 			std::shared_ptr<Address> NewAddress () const override;
-			boost::shared_ptr<Addresses> NewAddresses () const override;
+			RouterInfo::AddressesPtr NewAddresses () const override;
 			std::shared_ptr<IdentityEx> NewIdentity (const uint8_t * buf, size_t len) const override;
 
 		private:

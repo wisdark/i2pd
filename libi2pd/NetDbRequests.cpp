@@ -21,7 +21,7 @@ namespace data
 {
 	RequestedDestination::RequestedDestination (const IdentHash& destination, bool isExploratory, bool direct):
 		m_Destination (destination), m_IsExploratory (isExploratory), m_IsDirect (direct), m_IsActive (true),
-		m_CreationTime (i2p::util::GetSecondsSinceEpoch ()), m_LastRequestTime (0), m_NumAttempts (0)
+		m_CreationTime (i2p::util::GetMillisecondsSinceEpoch ()), m_LastRequestTime (0), m_NumAttempts (0)
 	{
 		if (i2p::context.IsFloodfill ())
 			m_ExcludedPeers.insert (i2p::context.GetIdentHash ()); // exclude self if floodfill
@@ -44,7 +44,7 @@ namespace data
 			msg = i2p::CreateRouterInfoDatabaseLookupMsg(m_Destination, i2p::context.GetIdentHash(), 0, m_IsExploratory, &m_ExcludedPeers);
 		if(router)
 			m_ExcludedPeers.insert (router->GetIdentHash ());
-		m_LastRequestTime = i2p::util::GetSecondsSinceEpoch ();
+		m_LastRequestTime = i2p::util::GetMillisecondsSinceEpoch ();
 		m_NumAttempts++;
 		return msg;
 	}
@@ -55,7 +55,7 @@ namespace data
 			i2p::context.GetRouterInfo ().GetIdentHash () , 0, false, &m_ExcludedPeers);
 		m_ExcludedPeers.insert (floodfill);
 		m_NumAttempts++;
-		m_LastRequestTime = i2p::util::GetSecondsSinceEpoch ();
+		m_LastRequestTime = i2p::util::GetMillisecondsSinceEpoch ();
 		return msg;
 	}
 
@@ -179,7 +179,7 @@ namespace data
 
 	void NetDbRequests::RequestComplete (const IdentHash& ident, std::shared_ptr<RouterInfo> r)
 	{
-		GetIOService ().post ([this, ident, r]()
+		boost::asio::post (GetIOService (), [this, ident, r]()
 			{                      
 				std::shared_ptr<RequestedDestination> request;
 				auto it = m_RequestedDestinations.find (ident);
@@ -210,7 +210,7 @@ namespace data
 
 	void NetDbRequests::ManageRequests ()
 	{
-		uint64_t ts = i2p::util::GetSecondsSinceEpoch ();
+		uint64_t ts = i2p::util::GetMillisecondsSinceEpoch ();
 		for (auto it = m_RequestedDestinations.begin (); it != m_RequestedDestinations.end ();)
 		{
 			auto& dest = it->second;
@@ -267,7 +267,7 @@ namespace data
 					{
 						if (dest->IsActive ())
 						{
-							s->GetIOService ().post ([s, dest]()
+							boost::asio::post (s->GetIOService (), [s, dest]()
 								{
 									if (dest->IsActive ()) s->SendNextRequest (dest);
 								});
@@ -328,7 +328,8 @@ namespace data
 
 	void NetDbRequests::ScheduleManageRequests ()
 	{
-		m_ManageRequestsTimer.expires_from_now (boost::posix_time::seconds(MANAGE_REQUESTS_INTERVAL));
+		m_ManageRequestsTimer.expires_from_now (boost::posix_time::milliseconds(MANAGE_REQUESTS_INTERVAL +
+			m_Rng () % MANAGE_REQUESTS_INTERVAL_VARIANCE));
 		m_ManageRequestsTimer.async_wait (std::bind (&NetDbRequests::HandleManageRequestsTimer,
 			this, std::placeholders::_1));
 	}
@@ -345,7 +346,7 @@ namespace data
 
 	void NetDbRequests::PostDatabaseSearchReplyMsg (std::shared_ptr<const I2NPMessage> msg)
 	{
-		GetIOService ().post ([this, msg]()
+		boost::asio::post (GetIOService (), [this, msg]()
 			{
 				HandleDatabaseSearchReplyMsg (msg);
 			});	
@@ -431,7 +432,7 @@ namespace data
 	void NetDbRequests::PostRequestDestination (const IdentHash& destination, 
 		const RequestedDestination::RequestComplete& requestComplete, bool direct)
 	{
-		GetIOService ().post ([this, destination, requestComplete, direct]()
+		boost::asio::post (GetIOService (), [this, destination, requestComplete, direct]()
 			{
 				RequestDestination (destination, requestComplete, direct);
 			});	

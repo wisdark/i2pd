@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2023, The PurpleI2P Project
+* Copyright (c) 2013-2024, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -62,7 +62,8 @@ namespace data
 	const size_t LEASE_SIZE = 44; // 32 + 4 + 8
 	const size_t LEASE2_SIZE = 40; // 32 + 4 + 4
 	const uint8_t MAX_NUM_LEASES = 16;
-
+	const uint64_t LEASESET_EXPIRATION_TIME_THRESHOLD = 12*60*1000; // in milliseconds
+	
 	const uint8_t NETDB_STORE_TYPE_LEASESET = 1;
 	class LeaseSet: public RoutingDestination
 	{
@@ -180,7 +181,7 @@ namespace data
 		private:
 
 			uint8_t m_StoreType;
-			uint32_t m_PublishedTimestamp = 0;
+			uint32_t m_PublishedTimestamp = 0; // seconds
 			bool m_IsPublic = true, m_IsPublishedEncrypted = false;
 			std::shared_ptr<i2p::crypto::Verifier> m_TransientVerifier;
 			CryptoKeyType m_EncryptionType;
@@ -256,7 +257,8 @@ namespace data
 			LocalLeaseSet2 (uint8_t storeType, const i2p::data::PrivateKeys& keys,
 				const KeySections& encryptionKeys,
 				const std::vector<std::shared_ptr<i2p::tunnel::InboundTunnel> >& tunnels,
-				bool isPublic, bool isPublishedEncrypted = false);
+				bool isPublic, uint64_t publishedTimestamp,
+			    bool isPublishedEncrypted = false);
 
 			LocalLeaseSet2 (uint8_t storeType, std::shared_ptr<const IdentityEx> identity, const uint8_t * buf, size_t len); // from I2CP
 

@@ -117,9 +117,14 @@ namespace config {
 			("httpproxy.latency.max", value<std::string>()->default_value("0"),       "HTTP proxy max latency for tunnels")
 			("httpproxy.outproxy", value<std::string>()->default_value(""),           "HTTP proxy upstream out proxy url")
 			("httpproxy.addresshelper", value<bool>()->default_value(true),           "Enable or disable addresshelper")
+			("httpproxy.senduseragent", value<bool>()->default_value(false),          "Pass through user's User-Agent if enabled. Disabled by default")
 			("httpproxy.i2cp.leaseSetType", value<std::string>()->default_value("3"), "Local destination's LeaseSet type")
 			("httpproxy.i2cp.leaseSetEncType", value<std::string>()->default_value("0,4"), "Local destination's LeaseSet encryption type")
 			("httpproxy.i2cp.leaseSetPrivKey", value<std::string>()->default_value(""), "LeaseSet private key")
+			("httpproxy.i2p.streaming.maxOutboundSpeed", value<std::string>()->default_value("1730000000"), "Max outbound speed of HTTP proxy stream in bytes/sec")
+			("httpproxy.i2p.streaming.maxInboundSpeed", value<std::string>()->default_value("1730000000"), "Max inbound speed of HTTP proxy stream in bytes/sec")
+			("httpproxy.i2p.streaming.profile", value<std::string>()->default_value("1"), "HTTP Proxy bandwidth usage profile. 1 - bulk(high), 2- interactive(low)")
+
 		;
 
 		options_description socksproxy("SOCKS Proxy options");
@@ -144,6 +149,9 @@ namespace config {
 			("socksproxy.i2cp.leaseSetType", value<std::string>()->default_value("3"), "Local destination's LeaseSet type")
 			("socksproxy.i2cp.leaseSetEncType", value<std::string>()->default_value("0,4"), "Local destination's LeaseSet encryption type")
 			("socksproxy.i2cp.leaseSetPrivKey", value<std::string>()->default_value(""), "LeaseSet private key")
+			("socksproxy.i2p.streaming.maxOutboundSpeed", value<std::string>()->default_value("1730000000"), "Max outbound speed of SOCKS proxy stream in bytes/sec")
+			("socksproxy.i2p.streaming.maxInboundSpeed", value<std::string>()->default_value("1730000000"), "Max inbound speed of SOCKS proxy stream in bytes/sec")
+			("socksproxy.i2p.streaming.profile", value<std::string>()->default_value("1"), "SOCKS Proxy bandwidth usage profile. 1 - bulk(high), 2- interactive(low)")
 		;
 
 		options_description sam("SAM bridge options");
@@ -168,6 +176,8 @@ namespace config {
 			("i2cp.address", value<std::string>()->default_value("127.0.0.1"), "I2CP listen address")
 			("i2cp.port", value<uint16_t>()->default_value(7654),              "I2CP listen port")
 			("i2cp.singlethread", value<bool>()->default_value(true),          "Destinations run in the I2CP server's thread")
+			("i2cp.inboundlimit", value<uint32_t>()->default_value(0),         "Client inbound limit in KBps to return in BandwidthLimitsMessage. Router's bandwidth by default")
+			("i2cp.outboundlimit", value<uint32_t>()->default_value(0),        "Client outbound limit in KBps to return in BandwidthLimitsMessage. Router's bandwidth by default")
 		;
 
 		options_description i2pcontrol("I2PControl options");
@@ -228,7 +238,6 @@ namespace config {
 				"http://[324:71e:281a:9ed3::ace]:7070/,"
 				"http://[301:65b9:c7cd:9a36::1]:18801/,"
 				"http://[320:8936:ec1a:31f1::216]/,"
-				"http://[306:3834:97b9:a00a::1]/,"
 				"http://[316:f9e0:f22e:a74f::216]/"
 			),                                                            "Reseed URLs through the Yggdrasil, separated by comma")
 		;
@@ -306,11 +315,11 @@ namespace config {
 			("persist.addressbook", value<bool>()->default_value(true),    "Persist full addresses (default: true)")
 		;
 
-		options_description cpuext("CPU encryption extensions options");
+		options_description cpuext("CPU encryption extensions options. Deprecated");
 		cpuext.add_options()
-			("cpuext.aesni", bool_switch()->default_value(true),                     "Use auto detection for AESNI CPU extensions. If false, AESNI will be not used")
+			("cpuext.aesni", bool_switch()->default_value(true),                     "Deprecated option")
 			("cpuext.avx", bool_switch()->default_value(false),                      "Deprecated option")
-			("cpuext.force", bool_switch()->default_value(false),                    "Force usage of CPU extensions. Useful when cpuinfo is not available on virtual machines")
+			("cpuext.force", bool_switch()->default_value(false),                    "Deprecated option")
 		;
 
 		options_description meshnets("Meshnet transports options");

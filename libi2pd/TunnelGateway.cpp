@@ -220,21 +220,24 @@ namespace tunnel
 
 	void TunnelGateway::SendBuffer ()
 	{
+		// create list or tunnel messages
 		m_Buffer.CompleteCurrentTunnelDataMessage ();
-		std::vector<std::shared_ptr<I2NPMessage> > newTunnelMsgs;
+		std::list<std::shared_ptr<I2NPMessage> > newTunnelMsgs;
 		const auto& tunnelDataMsgs = m_Buffer.GetTunnelDataMsgs ();
 		for (auto& tunnelMsg : tunnelDataMsgs)
 		{
 			auto newMsg = CreateEmptyTunnelDataMsg (false);
-			m_Tunnel->EncryptTunnelMsg (tunnelMsg, newMsg);
-			htobe32buf (newMsg->GetPayload (), m_Tunnel->GetNextTunnelID ());
+			m_Tunnel.EncryptTunnelMsg (tunnelMsg, newMsg);
+			htobe32buf (newMsg->GetPayload (), m_Tunnel.GetNextTunnelID ());
 			newMsg->FillI2NPMessageHeader (eI2NPTunnelData);
 			if (tunnelMsg->onDrop) newMsg->onDrop = tunnelMsg->onDrop;
 			newTunnelMsgs.push_back (newMsg);
 			m_NumSentBytes += TUNNEL_DATA_MSG_SIZE;
 		}
 		m_Buffer.ClearTunnelDataMsgs ();
-		i2p::transport::transports.SendMessages (m_Tunnel->GetNextIdentHash (), newTunnelMsgs);
+		// send 
+		if (!m_Sender) m_Sender = std::make_unique<TunnelTransportSender>();
+		m_Sender->SendMessagesTo (m_Tunnel.GetNextIdentHash (), std::move (newTunnelMsgs));		
 	}
 }
 }

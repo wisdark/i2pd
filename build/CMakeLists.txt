@@ -29,7 +29,6 @@ project(
 )
 
 # configurable options
-option(WITH_AESNI           "Use AES-NI instructions set"             ON)
 option(WITH_HARDENING       "Use hardening compiler flags"            OFF)
 option(WITH_LIBRARY         "Build library"                           ON)
 option(WITH_BINARY          "Build binary"                            ON)
@@ -156,20 +155,6 @@ else()
   endif()
   set(CMAKE_CXX_FLAGS_MINSIZEREL "${CMAKE_CXX_FLAGS_MINSIZEREL} -ffunction-sections -fdata-sections")
   set(CMAKE_EXE_LINKER_FLAGS_MINSIZEREL "-Wl,--gc-sections") # -flto is added from above
-
-  # check for c++17 & c++11 support
-  include(CheckCXXCompilerFlag)
-
-  CHECK_CXX_COMPILER_FLAG("-std=c++17" CXX17_SUPPORTED)
-  CHECK_CXX_COMPILER_FLAG("-std=c++11" CXX11_SUPPORTED)
-
-  if(CXX17_SUPPORTED)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
-  elseif(CXX11_SUPPORTED)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
-  else()
-    message(SEND_ERROR "C++17 nor C++11 standard not seems to be supported by compiler. Too old version?")
-  endif()
 endif()
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
@@ -199,16 +184,6 @@ if(UNIX)
   endif()
 endif()
 
-# Note: AES-NI and AVX is available on x86-based CPU's.
-# Here also ARM64 implementation, but currently we don't support it.
-# MSVC is not supported due to different ASM processing, so we hope OpenSSL has its own checks to run optimized code.
-if(WITH_AESNI AND (ARCHITECTURE MATCHES "x86_64" OR ARCHITECTURE MATCHES "i386"))
-  if(NOT MSVC)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -maes")
-  endif()
-  add_definitions(-D__AES__)
-endif()
-
 if(WITH_ADDRSANITIZER)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
@@ -221,6 +196,10 @@ if(WITH_THREADSANITIZER)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
   endif()
+endif()
+
+if (CMAKE_COMPILER_IS_GNUCC AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 10.0 AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 8.0) # gcc 8-9
+    list(APPEND CMAKE_REQUIRED_LIBRARIES "stdc++fs")
 endif()
 
 # Use std::atomic instead of GCC builtins on macOS PowerPC:
@@ -277,14 +256,14 @@ else()
   if(NOT MSVC)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
   endif()
-  add_definitions(-DBOOST_ATOMIC_DYN_LINK -DBOOST_SYSTEM_DYN_LINK -DBOOST_FILESYSTEM_DYN_LINK -DBOOST_PROGRAM_OPTIONS_DYN_LINK -DBOOST_DATE_TIME_DYN_LINK -DBOOST_REGEX_DYN_LINK)
+  add_definitions(-DBOOST_ATOMIC_DYN_LINK -DBOOST_SYSTEM_DYN_LINK -DBOOST_FILESYSTEM_DYN_LINK -DBOOST_PROGRAM_OPTIONS_DYN_LINK)
   if(WIN32)
     set(Boost_USE_STATIC_LIBS OFF)
     set(Boost_USE_STATIC_RUNTIME OFF)
   endif()
 endif()
 
-find_package(Boost REQUIRED COMPONENTS system filesystem program_options date_time OPTIONAL_COMPONENTS atomic)
+find_package(Boost REQUIRED COMPONENTS system filesystem program_options)
 if(NOT DEFINED Boost_FOUND)
   message(SEND_ERROR "Boost is not found, or your boost version was below 1.46. Please download Boost!")
 endif()
@@ -312,6 +291,26 @@ if(ZLIB_FOUND)
   link_directories(${ZLIB_ROOT}/lib)
 endif()
 
+# C++ standard to use, based on compiler and version of boost
+if(NOT MSVC)
+# check for c++20 & c++17 support
+  include(CheckCXXCompilerFlag)
+
+  if(Boost_VERSION VERSION_GREATER_EQUAL "1.83") # min boost version for c++20
+    CHECK_CXX_COMPILER_FLAG("-std=c++20" CXX20_SUPPORTED)
+  endif()
+  CHECK_CXX_COMPILER_FLAG("-std=c++17" CXX17_SUPPORTED)
+ 
+
+  if(CXX20_SUPPORTED)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++20")
+  elseif(CXX17_SUPPORTED)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
+  else()
+    message(SEND_ERROR "C++20 nor C++17 standard not seems to be supported by compiler. Too old version?")
+  endif()
+endif()
+
 # load includes
 include_directories(SYSTEM ${Boost_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIR} ${ZLIB_INCLUDE_DIR})
 
@@ -322,9 +321,9 @@ message(STATUS "Compiler vendor    : ${CMAKE_CXX_COMPILER_ID}")
 message(STATUS "Compiler version   : ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "Compiler path      : ${CMAKE_CXX_COMPILER}")
 message(STATUS "Architecture       : ${ARCHITECTURE}")
+message(STATUS "Compiler flags     : ${CMAKE_CXX_FLAGS}")
 message(STATUS "Install prefix:    : ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "Options:")
-message(STATUS "  AESNI            : ${WITH_AESNI}")
 message(STATUS "  HARDENING        : ${WITH_HARDENING}")
 message(STATUS "  LIBRARY          : ${WITH_LIBRARY}")
 message(STATUS "  BINARY           : ${WITH_BINARY}")

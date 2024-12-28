@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2013-2023, The PurpleI2P Project
+* Copyright (c) 2013-2024, The PurpleI2P Project
 *
 * This file is part of Purple i2pd project and licensed under BSD3
 *
@@ -123,8 +123,8 @@ const char *inet_ntop_xp(int af, const void *src, char *dst, socklen_t size)
 #endif
 #endif
 
-#define address_pair_v4(a,b) { boost::asio::ip::address_v4::from_string (a).to_ulong (), boost::asio::ip::address_v4::from_string (b).to_ulong () }
-#define address_pair_v6(a,b) { boost::asio::ip::address_v6::from_string (a).to_bytes (), boost::asio::ip::address_v6::from_string (b).to_bytes () }
+#define address_pair_v4(a,b) { boost::asio::ip::make_address (a).to_v4 ().to_uint (), boost::asio::ip::make_address(b).to_v4 ().to_uint () }
+#define address_pair_v6(a,b) { boost::asio::ip::make_address (a).to_v6 ().to_bytes (), boost::asio::ip::make_address(b).to_v6 ().to_bytes () }
 
 namespace i2p
 {
@@ -169,6 +169,14 @@ namespace util
 				LogPrint (eLogError, m_Name, ": Runtime exception: ", ex.what ());
 			}
 		}
+	}
+
+	void RunnableService::SetName (std::string_view name)
+	{
+		if (name.length() < 16)
+			m_Name = name;
+		else
+			m_Name = name.substr(0,15);
 	}
 
 	void SetThreadName (const char *name) {
@@ -446,9 +454,9 @@ namespace net
 #ifdef _WIN32
 		LogPrint(eLogError, "NetIface: Cannot get address by interface name, not implemented on WIN32");
 		if (ipv6)
-			return boost::asio::ip::address::from_string("::1");
+			return boost::asio::ip::make_address("::1");
 		else
-			return boost::asio::ip::address::from_string("127.0.0.1");
+			return boost::asio::ip::make_address("127.0.0.1");
 #else
 		int af = (ipv6 ? AF_INET6 : AF_INET);
 		ifaddrs *addrs;
@@ -470,7 +478,7 @@ namespace net
 							inet_ntop(af, &((sockaddr_in6 *)cur->ifa_addr)->sin6_addr, addr, INET6_ADDRSTRLEN);
 						freeifaddrs(addrs);
 						std::string cur_ifaddr(addr);
-						return boost::asio::ip::address::from_string(cur_ifaddr);
+						return boost::asio::ip::make_address(cur_ifaddr);
 					}
 				}
 			}
@@ -490,7 +498,7 @@ namespace net
 			fallback = "127.0.0.1";
 			LogPrint(eLogWarning, "NetIface: Cannot find IPv4 address for interface ", ifname);
 		}
-		return boost::asio::ip::address::from_string(fallback);
+		return boost::asio::ip::make_address(fallback);
 #endif
 	}
 
@@ -656,7 +664,7 @@ namespace net
 				address_pair_v4("224.0.0.0",    "255.255.255.255")
 			};
 
-			uint32_t ipv4_address = host.to_v4 ().to_ulong ();
+			uint32_t ipv4_address = host.to_v4 ().to_uint ();
 			for (const auto& it : reservedIPv4Ranges) {
 				if (ipv4_address >= it.first && ipv4_address <= it.second)
 					return true;

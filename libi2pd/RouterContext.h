@@ -37,7 +37,7 @@ namespace garlic
 	const int ROUTER_INFO_CONFIRMATION_TIMEOUT = 5; // in seconds
 	const int ROUTER_INFO_MAX_PUBLISH_EXCLUDED_FLOODFILLS = 15;
 	const int ROUTER_INFO_CONGESTION_UPDATE_INTERVAL = 12*60; // in seconds
-	const int ROUTER_INFO_CLEANUP_INTERVAL = 5; // in minutes
+	const int ROUTER_INFO_CLEANUP_INTERVAL = 102; // in seconds
 
 	enum RouterStatus
 	{
@@ -90,7 +90,7 @@ namespace garlic
 				public:
 
 					RouterService (): RunnableServiceWithWork ("Router") {};
-					boost::asio::io_service& GetService () { return GetIOService (); };
+					auto& GetService () { return GetIOService (); };
 					void Start () { StartIOService (); };
 					void Stop () { StopIOService (); };
 			};
@@ -146,7 +146,6 @@ namespace garlic
 			void SetNetID (int netID) { m_NetID = netID; };
 			bool DecryptTunnelBuildRecord (const uint8_t * encrypted, uint8_t * data);
 			bool DecryptTunnelShortRequestRecord (const uint8_t * encrypted, uint8_t * data);
-			void SubmitECIESx25519Key (const uint8_t * key, uint64_t tag);
 
 			void UpdatePort (int port); // called from Daemon
 			void UpdateAddress (const boost::asio::ip::address& host); // called from SSU2 or Daemon
@@ -154,6 +153,7 @@ namespace garlic
 			void PublishSSU2Address (int port, bool publish, bool v4, bool v6);
 			bool AddSSU2Introducer (const i2p::data::RouterInfo::Introducer& introducer, bool v4);
 			void RemoveSSU2Introducer (const i2p::data::IdentHash& h, bool v4);
+			void UpdateSSU2Introducer (const i2p::data::IdentHash& h, bool v4, uint32_t iTag, uint32_t iExp);
 			void ClearSSU2Introducers (bool v4);
 			bool IsUnreachable () const;
 			void SetUnreachable (bool v4, bool v6);
@@ -177,6 +177,7 @@ namespace garlic
 			void SetMTU (int mtu, bool v4);
 			void SetHidden(bool hide) { m_IsHiddenMode = hide; };
 			bool IsHidden() const { return m_IsHiddenMode; };
+			bool IsLimitedConnectivity () const { return m_Status == eRouterStatusProxy; }; // TODO: implement other cases
 			i2p::crypto::NoiseSymmetricState& GetCurrentNoiseState () { return m_CurrentNoiseState; };
 
 			void UpdateNTCP2V6Address (const boost::asio::ip::address& host); // called from Daemon. TODO: remove
@@ -184,24 +185,24 @@ namespace garlic
 			void UpdateTimestamp (uint64_t ts); // in seconds, called from NetDb before publishing
 
 			// implements LocalDestination
-			std::shared_ptr<const i2p::data::IdentityEx> GetIdentity () const { return m_Keys.GetPublic (); };
-			bool Decrypt (const uint8_t * encrypted, uint8_t * data, i2p::data::CryptoKeyType preferredCrypto) const;
-			void Sign (const uint8_t * buf, int len, uint8_t * signature) const { m_Keys.Sign (buf, len, signature); };
-			void SetLeaseSetUpdated () {};
+			std::shared_ptr<const i2p::data::IdentityEx> GetIdentity () const override{ return m_Keys.GetPublic (); };
+			bool Decrypt (const uint8_t * encrypted, uint8_t * data, i2p::data::CryptoKeyType preferredCrypto) const override;
+			void SetLeaseSetUpdated (bool post) override {};
 
 			// implements GarlicDestination
-			std::shared_ptr<const i2p::data::LocalLeaseSet> GetLeaseSet () { return nullptr; };
-			std::shared_ptr<i2p::tunnel::TunnelPool> GetTunnelPool () const;
+			std::shared_ptr<const i2p::data::LocalLeaseSet> GetLeaseSet () override { return nullptr; };
+			std::shared_ptr<i2p::tunnel::TunnelPool> GetTunnelPool () const override;
 
 			// override GarlicDestination
-			void ProcessGarlicMessage (std::shared_ptr<I2NPMessage> msg);
-			void ProcessDeliveryStatusMessage (std::shared_ptr<I2NPMessage> msg);
+			void ProcessGarlicMessage (std::shared_ptr<I2NPMessage> msg) override;
+			void ProcessDeliveryStatusMessage (std::shared_ptr<I2NPMessage> msg) override;
+			void SubmitECIESx25519Key (const uint8_t * key, uint64_t tag) override;
 
 		protected:
 
 			// implements GarlicDestination
-			void HandleI2NPMessage (const uint8_t * buf, size_t len);
-			bool HandleCloveI2NPMessage (I2NPMessageType typeID, const uint8_t * payload, size_t len, uint32_t msgID);
+			void HandleI2NPMessage (const uint8_t * buf, size_t len) override;
+			bool HandleCloveI2NPMessage (I2NPMessageType typeID, const uint8_t * payload, size_t len, uint32_t msgID) override;
 
 		private:
 
@@ -214,6 +215,7 @@ namespace garlic
 			void UpdateSSU2Keys ();
 			bool Load ();
 			void SaveKeys ();
+			void Sign (const uint8_t * buf, int len, uint8_t * signature) const { m_Keys.Sign (buf, len, signature); };
 			uint16_t SelectRandomPort () const;
 			void PublishNTCP2Address (std::shared_ptr<i2p::data::RouterInfo::Address> address, int port, bool publish) const;
 

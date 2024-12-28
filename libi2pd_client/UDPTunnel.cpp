@@ -86,7 +86,7 @@ namespace client
 				}
 				else
 				{
-					LogPrint(eLogWarning, "UDPServer: Session with from ", remotePort, " and to ", localPort, " ports already exists. But from differend address. Removed");
+					LogPrint(eLogWarning, "UDPServer: Session with from ", remotePort, " and to ", localPort, " ports already exists. But from different address. Removed");
 					m_Sessions.erase (it);
 				}
 			}
@@ -203,7 +203,7 @@ namespace client
 		std::vector<std::shared_ptr<DatagramSessionInfo> > sessions;
 		std::lock_guard<std::mutex> lock (m_SessionsMutex);
 
-		for (auto it: m_Sessions)
+        for (const auto &it: m_Sessions)
 		{
 			auto s = it.second;
 			if (!s->m_Destination) continue;
